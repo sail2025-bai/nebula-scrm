@@ -1,12 +1,9 @@
 import express from 'express'
 import { db, now } from '../db.js'
 import { ipWhitelist } from '../middleware/ipWhitelist.js'
-import {
-  verifyWxSignature,
-  decryptWxEncrypt
-} from '../utils/wecom-crypto.js'
 import * as orderRepo from '../repositories/orderRepo.js'
 import * as customerRepo from '../repositories/customerRepo.js'
+import { decryptEncryptedCallback, handleEcho } from '../utils/webhooks.js'
 
 const router = express.Router()
 
@@ -210,73 +207,39 @@ function handleShopOrder(body) {
 }
 
 router.post('/webhook/channels-shop', ipWhitelist('video_shop_webhook_ips'), (req, res) => {
-  // 从 wecom_config 读视频号小店加密配置
   const cfg = db.prepare('SELECT * FROM wecom_config WHERE id = 1').get() || {}
-  const token = cfg.video_shop_token
-  const aesKey = cfg.video_shop_encoding_aes_key
-  const appid = cfg.video_shop_appid
 
-  const body = req.body || {}
-  const wxSignature = req.headers['x-wx-signature'] || req.headers['x-wechat-signature'] || body.MsgSignature || body.msg_signature
-
-  let parsed = body
-  let decryptedAppid = null
-
-  // === 分支 A: 微信加密回调 ===
-  if (body.Encrypt && wxSignature) {
-    if (!token || !aesKey) {
-      console.warn('[webhook/channels-shop] 收到加密回调但未配置 video_shop_token / video_shop_encoding_aes_key，尝试裸 JSON 回退')
-    } else {
-      const ts = req.headers['x-wx-timestamp'] || req.headers['x-wechat-timestamp'] || body.Timestamp || String(Math.floor(Date.now() / 1000))
-      const nonce = req.headers['x-wx-nonce'] || req.headers['x-wechat-nonce'] || body.Nonce || String(Math.floor(Math.random() * 1e9))
-      const encrypt = body.Encrypt
-
-      if (!verifyWxSignature(token, ts, nonce, wxSignature, encrypt)) {
-        console.warn('[webhook/channels-shop] 签名校验失败', { token_mask: token?.slice(0, 4) + '***', ts, nonce })
-        return res.status(401).json({ error: '微信签名校验失败' })
-      }
-      try {
-        const { msg, appid: gotAppid } = decryptWxEncrypt(encrypt, aesKey)
-        parsed = JSON.parse(msg)
-        decryptedAppid = gotAppid
-        if (appid && gotAppid && appid !== gotAppid) {
-          console.warn('[webhook/channels-shop] AppID 不匹配', { configured: appid, received: gotAppid })
-        }
-      } catch (e) {
-        console.error('[webhook/channels-shop] Encrypt 解密失败:', e.message)
-        return res.status(400).json({ error: 'Encrypt 解密失败: ' + e.message })
-      }
-    }
+  // 加密 / 裸 JSON 统一处理：从 header/body 读签名三元组 → 验签 → 解密
+  let parsed, decryptedAppid
+  try {
+    ({ parsed, decryptedAppid } = decryptEncryptedCallback(
+      { body: req.body || {}, headers: req.headers, query: req.query },
+      { token: cfg.video_shop_token, aesKey: cfg.video_shop_encoding_aes_key, appid: cfg.video_shop_appid }
+    ))
+  } catch (e) {
+    if (String(e.message || '').includes('签名校验')) return res.status(401).json({ error: e.message })
+    return res.status(400).json({ error: e.message })
   }
-
-  // === 分支 B: 裸 JSON —— parsed 直接就是 body ===
 
   const result = handleShopOrder(parsed)
   if (!result.ok) {
     return res.status(result.status || 400).json({ error: result.error })
   }
 
-  // 企业微信 / 视频号小店有些回调要求返回 success 或特定 XML 表示收到
-  res.json({ errcode: 0, errmsg: 'success', ...result, _decrypted_appid: decryptedAppid ? decryptedAppid.replace(/[ -]+$/, '') : null })
+  res.json({
+    errcode: 0, errmsg: 'success', ...result,
+    _decrypted_appid: decryptedAppid ? decryptedAppid.replace(/[\x00-\x1f]+$/, '') : null
+  })
 })
 
 // GET 用于微信后台的"服务器配置验证"URL
 router.get('/webhook/channels-shop', ipWhitelist('video_shop_webhook_ips'), (req, res) => {
   const cfg = db.prepare('SELECT * FROM wecom_config WHERE id = 1').get() || {}
-  const token = cfg.video_shop_token
-  const { msg_signature, timestamp, nonce, echostr } = req.query
-  if (token && msg_signature && echostr && verifyWxSignature(token, timestamp, nonce, msg_signature)) {
-    if (cfg.video_shop_encoding_aes_key) {
-      try {
-        const { msg } = decryptWxEncrypt(String(echostr), cfg.video_shop_encoding_aes_key)
-        return res.type('text/plain').send(msg)
-      } catch (e) {
-        return res.status(400).send('echostr 解密失败')
-      }
-    }
-    return res.type('text/plain').send(String(echostr))
-  }
-  res.status(200).send('ok')
+  const { body, status } = handleEcho(
+    { query: req.query, headers: req.headers },
+    { token: cfg.video_shop_token, aesKey: cfg.video_shop_encoding_aes_key }
+  )
+  res.status(status).type('text/plain').send(body)
 })
 
 export default router

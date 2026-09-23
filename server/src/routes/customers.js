@@ -1,5 +1,6 @@
 import express from 'express'
 import { db, now, fmt, buildSegmentWhere } from '../db.js'
+import * as orderRepo from '../repositories/orderRepo.js'
 
 const router = express.Router()
 
@@ -250,22 +251,22 @@ router.post('/:id/purchase', (req, res) => {
 
   // 同步写入 orders 台账（幂等：同 order_no 不重复）
   if (req.body.order_no) {
-    const dup = db.prepare('SELECT id FROM orders WHERE order_no = ?').get(req.body.order_no)
-    if (!dup) {
+    if (!orderRepo.findByOrderNo(req.body.order_no)) {
       const saved = couponResult?.saved || 0
       const effectivePaid = amount - saved
-      db.prepare(`INSERT INTO orders
-        (order_no,customer_id,staff_id,amount,paid_amount,discount,coupon_code,source,status,product_name,remark,order_at,paid_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-        req.body.order_no, c.id, c.staff_id,
-        amount, effectivePaid, saved,
-        couponCode || null,
-        req.body.source || 'manual',
-        'paid',
-        req.body.product_name || null,
-        req.body.remark || null,
-        now(), now()
-      )
+      orderRepo.createOrder({
+        order_no: req.body.order_no,
+        customer_id: c.id,
+        staff_id: c.staff_id,
+        amount,
+        paid_amount: effectivePaid,
+        discount: saved,
+        coupon_code: couponCode || null,
+        source: req.body.source || 'manual',
+        status: 'paid',
+        product_name: req.body.product_name || null,
+        remark: req.body.remark || null
+      })
     }
   }
 

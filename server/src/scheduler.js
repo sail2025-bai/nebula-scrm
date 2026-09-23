@@ -1,6 +1,11 @@
 import { log, syncStaffWecom } from './wecom.js'
 import { pollMsgAudit, zeroTodayMessages } from './wecom-msgaudit.js'
 import { db } from './db.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 let timers = []
 
@@ -238,37 +243,51 @@ async function runSOP(sop, customerIds, triggeredBy) {
   return { run_id: r.lastInsertRowid, success_count: success, couponIssued, tagApplied }
 }
 
-  // H：每日 3 点做 SQLite 备份（VACUUM INTO），保留最近 7 天
-  function scheduleDailyBackup() {
-    const now = new Date()
-    const next = new Date(now)
-    next.setHours(3, 0, 0, 0)
-    if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1)
-    const ms = next.getTime() - now.getTime()
-    const handle = setTimeout(() => {
-      try {
-        const fs = require('node:fs')
-        const path = require('node:path')
-        const backupDir = path.join(__dirname, '..', 'data', 'backups')
-        if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true })
-        const dateStr = new Date().toISOString().slice(0, 10)
-        const backupFile = path.join(backupDir, `scrm-${dateStr}.db`)
-        // WAL 模式下用 VACUUM INTO，保证备份一致性
-        db.prepare('VACUUM INTO ?').run(backupFile)
-        log('backup', 'info', `每日备份完成: ${backupFile}`)
-        // 保留最近 7 天，清老备份
-        const files = fs.readdirSync(backupDir)
-          .filter((f) => f.startsWith('scrm-') && f.endsWith('.db'))
-          .sort()
-        files.slice(0, -7).forEach((f) => {
-          try { fs.unlinkSync(path.join(backupDir, f)) } catch {}
-        })
-      } catch (e) {
-        log('backup', 'error', `每日备份失败: ${e.message}`)
-      } finally {
-        scheduleDailyBackup()
-      }
-    }, ms + 1000)
-    timers.push(handle)
-  }
-  scheduleDailyBackup()
+/**
+ * 立即执行一次 SQLite 备份 + 7 天轮转
+ * 独立导出函数，可在启动/测试/手动触发时直接调用
+ * @returns {{ file: string, size: number, retained: string[] }}
+ */
+export function runDailyBackup() {
+  const backupDir = path.join(__dirname, '..', 'data', 'backups')
+  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true })
+  const dateStr = new Date().toISOString().slice(0, 10)
+  const backupFile = path.join(backupDir, `scrm-${dateStr}.db`)
+
+  // WAL 模式下 VACUUM INTO 能在不断写的同时产出一个完整快照
+  db.prepare('VACUUM INTO ?').run(backupFile)
+  const size = fs.statSync(backupFile).size
+  log('backup', 'info', `每日备份完成: ${backupFile} (${(size / 1024).toFixed(1)} KB)`)
+
+  // 保留最近 7 天，清老备份
+  const files = fs.readdirSync(backupDir)
+    .filter((f) => f.startsWith('scrm-') && f.endsWith('.db'))
+    .sort()
+  files.slice(0, -7).forEach((f) => {
+    try { fs.unlinkSync(path.join(backupDir, f)) } catch {}
+  })
+
+  return { file: backupFile, size, retained: files.slice(-7) }
+}
+
+// H：每日 3 点做 SQLite 备份（VACUUM INTO），保留最近 7 天
+//   递归 setTimeout 计算到下次 3 点的毫秒数，避免每分钟轮询
+//   模块加载即自启动（与 startScheduler 的定时器共用 timers 数组）
+function scheduleDailyBackup() {
+  const now = new Date()
+  const next = new Date(now)
+  next.setHours(3, 0, 0, 0)
+  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1)
+  const ms = next.getTime() - now.getTime()
+  const handle = setTimeout(() => {
+    try {
+      runDailyBackup()
+    } catch (e) {
+      log('backup', 'error', `每日备份失败: ${e.message}`)
+    } finally {
+      scheduleDailyBackup()
+    }
+  }, ms + 1000)
+  timers.push(handle)
+}
+scheduleDailyBackup()
