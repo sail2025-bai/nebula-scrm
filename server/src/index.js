@@ -1,0 +1,106 @@
+import express from 'express'
+import cors from 'cors'
+import { db, initSchema } from './db.js'
+import { seedIfEmpty } from './seed.js'
+import { loadConfigFromEnv, wecomConfig, log } from './wecom.js'
+import { startScheduler } from './scheduler.js'
+import customersRouter from './routes/customers.js'
+import tagsRouter from './routes/tags.js'
+import segmentsRouter from './routes/segments.js'
+import groupsRouter from './routes/groups.js'
+import followupsRouter from './routes/followups.js'
+import broadcastsRouter from './routes/broadcasts.js'
+import sopsRouter from './routes/sops.js'
+import staffRouter from './routes/staff.js'
+import dashboardRouter from './routes/dashboard.js'
+import authRouter from './routes/auth.js'
+import wecomRouter from './routes/wecom.js'
+import seasRouter from './routes/seas.js'
+import qrcodesRouter from './routes/qrcodes.js'
+import backupRouter from './routes/backup.js'
+import couponsRouter from './routes/coupons.js'
+import seckillRouter from './routes/seckill.js'
+import publicRouter from './routes/public.js'
+import extRouter from './routes/ext.js'
+
+const app = express()
+app.use(cors())
+app.use(express.json())
+
+initSchema()
+seedIfEmpty()
+loadConfigFromEnv()
+
+app.use('/api/customers', customersRouter)
+app.use('/api/tags', tagsRouter)
+app.use('/api/segments', segmentsRouter)
+app.use('/api/groups', groupsRouter)
+app.use('/api/follow-ups', followupsRouter)
+app.use('/api/broadcasts', broadcastsRouter)
+app.use('/api/sops', sopsRouter)
+app.use('/api/staff', staffRouter)
+app.use('/api/dashboard', dashboardRouter)
+app.use('/api/auth', authRouter)
+app.use('/api/wecom', wecomRouter)
+app.use('/api/seas', seasRouter)
+app.use('/api/qrcodes', qrcodesRouter)
+app.use('/api/backup', backupRouter)
+app.use('/api/coupons', couponsRouter)
+app.use('/api/seckill', seckillRouter)
+app.use('/api/public', publicRouter)
+app.use('/api/ext', extRouter)
+
+// --- 前端生产构建静态托管（单进程一体化）---
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const CLIENT_DIST = path.resolve(__dirname, '../../client/dist')
+app.use(express.static(CLIENT_DIST))
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) return next()
+  res.sendFile(path.join(CLIENT_DIST, 'index.html'))
+})
+
+app.get('/api/channels', (req, res) => {
+  const mode = req.query.mode
+  if (mode === 'retail' || mode === 'service') {
+    const rows = db.prepare('SELECT DISTINCT channel FROM customers WHERE channel IS NOT NULL AND customer_type = ? ORDER BY channel').all(mode)
+    return res.json(rows.map((r) => r.channel))
+  }
+  const rows = db.prepare('SELECT DISTINCT channel FROM customers WHERE channel IS NOT NULL ORDER BY channel').all()
+  res.json(rows.map((r) => r.channel))
+})
+
+app.use((err, req, res, next) => {
+  console.error('[ERR]', err); res.status(400).json({ error: '请求处理失败：' + (err ? err.message : '未知错误') })
+})
+
+app.get('/api/health', (req, res) => {
+  try {
+    const cfg = wecomConfig()
+    const customers = db.prepare('SELECT COUNT(*) AS n FROM customers').get().n
+    const staff = db.prepare('SELECT COUNT(*) AS n FROM staff').get().n
+    const pending = db.prepare(`SELECT COUNT(*) AS n FROM broadcasts WHERE status = '待下发'`).get().n
+    const simCount = db.prepare('SELECT COUNT(*) AS n FROM wecom_events WHERE change_type = ?').get('simulated').n
+    res.json({
+      ok: true,
+      time: new Date().toISOString().replace('T', ' ').slice(0, 19),
+      app: 'scrm-server',
+      wecom: cfg ? {
+        status: cfg.status,
+        corp_id_masked: cfg.corp_id ? String(cfg.corp_id).slice(0, 4) + '****' : null,
+        last_sync_at: cfg.last_sync_at,
+        token_ready: !!(cfg.corp_id && cfg.corp_secret)
+      } : { status: 'unset' },
+      counts: { customers, staff, pending_broadcasts: pending, simulated_events: simCount }
+    })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+const PORT = parseInt(process.env.PORT || '3001')
+app.listen(PORT, () => {
+  log('server', 'info', `SCRM 生产化服务已启动 http://localhost:${PORT}`)
+  startScheduler()
+})

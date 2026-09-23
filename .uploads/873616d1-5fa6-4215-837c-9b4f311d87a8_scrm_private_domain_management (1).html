@@ -1,0 +1,1932 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NexusSCRM - 私域智慧运营与客户资产管理中心</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Google Fonts: Inter & Noto Sans SC -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'Noto Sans SC', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              50: '#ecfdf5',
+              100: '#d1fae5',
+              500: '#10b981',
+              600: '#059669',
+              700: '#047857',
+              800: '#065f46',
+            },
+            wechat: {
+              DEFAULT: '#07C160',
+              hover: '#06ad56',
+              light: '#e8f8f0'
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Custom clean scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+    .custom-shadow {
+      box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+    }
+    .card-hover {
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .card-hover:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.07);
+    }
+    /* Drawer animation */
+    .drawer-open {
+      transform: translateX(0%) !important;
+    }
+    .drawer-closed {
+      transform: translateX(100%) !important;
+    }
+    /* Sidebar slide & responsive display */
+    .sidebar-open {
+      transform: translateX(0%) !important;
+    }
+    .sidebar-closed {
+      transform: translateX(-100%) !important;
+    }
+    @media (min-width: 768px) {
+      #sidebar-menu {
+        transform: translateX(0) !important;
+        position: static !important;
+        display: flex !important;
+      }
+    }
+  </style>
+</head>
+
+<body class="bg-slate-50 text-slate-800 font-sans h-screen flex overflow-hidden">
+
+  <!-- Mobile Sidebar Backdrop -->
+  <div id="mobile-sidebar-backdrop" onclick="toggleMobileSidebar(false)" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-30 transition-opacity opacity-0 pointer-events-none md:hidden duration-300"></div>
+
+  <!-- Main Navigation Sidebar (Responsive: Off-canvas on mobile, fixed on desktop) -->
+  <aside id="sidebar-menu" class="fixed md:static inset-y-0 left-0 w-72 md:w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 z-40 sidebar-closed md:sidebar-open transition-transform duration-300">
+    <div>
+      <!-- Brand Logo -->
+      <div class="h-16 flex items-center justify-between px-6 border-b border-slate-100">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-white shadow-md shadow-emerald-200">
+            <i class="fa-solid fa-users-viewfinder text-lg"></i>
+          </div>
+          <div>
+            <h1 class="font-bold text-slate-900 leading-none tracking-tight">星云企微SCRM</h1>
+            <span class="text-[11px] text-emerald-600 font-medium tracking-wide">私域全链路增长引擎</span>
+          </div>
+        </div>
+        <!-- Mobile close button -->
+        <button onclick="toggleMobileSidebar(false)" class="md:hidden text-slate-400 hover:text-slate-700 w-8 h-8 rounded-lg flex items-center justify-center">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+
+      <!-- Tenant Org & Mode Selector (Supports Retail & Service/B2B Leads) -->
+      <div class="p-4 space-y-2">
+        <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 flex items-center justify-between">
+          <div class="flex items-center gap-2.5 overflow-hidden">
+            <span id="org-badge" class="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs shrink-0">
+              企
+            </span>
+            <div class="truncate">
+              <div id="org-name" class="text-xs font-semibold text-slate-800 truncate">知行智远·企服咨询部</div>
+              <div id="org-sub" class="text-[10px] text-slate-400">已授权 18 位私域顾问</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dynamic Mode Switcher -->
+        <div class="bg-slate-100/90 p-1 rounded-xl flex items-center text-xs font-medium border border-slate-200/60">
+          <button id="mode-btn-service" onclick="setBusinessMode('service')" class="flex-1 py-1.5 px-2 rounded-lg text-emerald-700 bg-white shadow-xs font-semibold flex items-center justify-center gap-1 transition">
+            <i class="fa-solid fa-briefcase text-[11px]"></i>
+            <span>B端·线索与大客户</span>
+          </button>
+          <button id="mode-btn-retail" onclick="setBusinessMode('retail')" class="flex-1 py-1.5 px-2 rounded-lg text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1 transition">
+            <i class="fa-solid fa-cart-shopping text-[11px]"></i>
+            <span>C端·消费与会员零售</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Navigation Menu -->
+      <nav class="px-3 space-y-1">
+        <button onclick="switchTab('dashboard')" id="nav-dashboard" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition text-emerald-700 bg-emerald-50">
+          <i class="fa-solid fa-chart-pie w-5 text-center text-emerald-600"></i>
+          <span>运营监控仪表盘</span>
+          <span class="ml-auto text-[10px] bg-emerald-200/60 text-emerald-800 font-semibold px-2 py-0.5 rounded-full">实时</span>
+        </button>
+
+        <button onclick="switchTab('customers')" id="nav-customers" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+          <i class="fa-solid fa-user-tag w-5 text-center text-slate-400"></i>
+          <span>客户资产 360°</span>
+          <span id="badge-churn-count" class="ml-auto text-[10px] bg-amber-100 text-amber-700 font-medium px-1.5 py-0.5 rounded-full">3预警</span>
+        </button>
+
+        <button onclick="switchTab('groups')" id="nav-groups" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+          <i class="fa-solid fa-comments w-5 text-center text-slate-400"></i>
+          <span>社群生命周期运营</span>
+        </button>
+
+        <button onclick="switchTab('sop')" id="nav-sop" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+          <i class="fa-solid fa-bolt-lightning w-5 text-center text-slate-400"></i>
+          <span>SOP 自动化策略流</span>
+          <span class="ml-auto text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded-full">4运行中</span>
+        </button>
+
+        <button onclick="switchTab('broadcast')" id="nav-broadcast" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+          <i class="fa-solid fa-bullhorn w-5 text-center text-slate-400"></i>
+          <span>精准触达与群发</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- User Profile & Sync Status -->
+    <div class="p-4 border-t border-slate-100">
+      <div class="flex items-center gap-3 mb-3">
+        <div class="relative">
+          <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80" alt="Avatar" class="w-9 h-9 rounded-full object-cover border border-slate-200">
+          <span class="absolute bottom-0 right-0 w-2.5 h-2.5 bg-wechat border-2 border-white rounded-full"></span>
+        </div>
+        <div class="overflow-hidden">
+          <div class="text-xs font-semibold text-slate-900 truncate">林晨 (私域运营总监)</div>
+          <div class="text-[11px] text-emerald-600 flex items-center gap-1">
+            <i class="fa-brands fa-weixin"></i> 企微已联通
+          </div>
+        </div>
+      </div>
+      <button onclick="triggerSyncWechat()" class="w-full py-1.5 px-3 bg-slate-100 hover:bg-slate-200/80 active:scale-95 text-slate-700 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition">
+        <i id="sync-icon" class="fa-solid fa-rotate text-slate-400 text-xs"></i>
+        <span>同步企微通讯录与动态</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main Application Content Area -->
+  <main class="flex-1 flex flex-col min-w-0 bg-slate-50 overflow-hidden relative">
+    <!-- Top Global Header -->
+    <header class="h-16 bg-white border-b border-slate-200 px-4 md:px-6 flex items-center justify-between shrink-0 z-10">
+      <!-- Breadcrumb, Mobile Hamburger & Status -->
+      <div class="flex items-center gap-2 md:gap-3 overflow-hidden">
+        <!-- Hamburger Menu Button for Mobile -->
+        <button onclick="toggleMobileSidebar(true)" class="md:hidden w-9 h-9 rounded-lg border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-100 active:scale-95 transition">
+          <i class="fa-solid fa-bars text-sm"></i>
+        </button>
+        <span id="page-title" class="font-bold text-base md:text-lg text-slate-800 truncate">运营监控仪表盘</span>
+        <span class="hidden sm:inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
+          企微Webhook就绪
+        </span>
+      </div>
+
+      <!-- Quick Action Controls -->
+    <div class="flex items-center gap-2 md:gap-3">
+        <!-- Global Search Bar (Adaptive width) -->
+        <div class="relative w-36 sm:w-48 md:w-64">
+          <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+          <input type="text" id="global-search" placeholder="搜索客户、群聊..." class="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-100 border border-transparent rounded-lg focus:bg-white focus:border-emerald-500 focus:outline-none transition">
+        </div>
+
+        <!-- Quick SOP Trigger Button -->
+        <button onclick="openBroadcastModal()" class="px-2.5 md:px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 md:gap-2 shadow-sm transition active:scale-95 shrink-0">
+          <i class="fa-solid fa-paper-plane text-xs"></i>
+          <span class="hidden sm:inline">新建群发</span>
+        </button>
+
+        <!-- Notification Bell -->
+        <button onclick="showToast('暂无未处理的企微异常拦截事件', 'info')" class="w-8 h-8 rounded-lg border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-slate-100 relative transition shrink-0">
+          <i class="fa-regular fa-bell text-sm"></i>
+          <span class="absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full"></span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Scrollable Body Content (pb-24 on mobile ensures bottom nav does not block content) -->
+    <div class="flex-1 overflow-y-auto p-4 md:p-6 pb-24 md:pb-6 space-y-6" id="views-container">
+
+      <!-- ============================================ -->
+      <!-- VIEW 1: DASHBOARD (运营监控看板) -->
+      <!-- ============================================ -->
+      <div id="view-dashboard" class="space-y-6">
+        <!-- Metric Cards Row -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <!-- Metric 1: 企微好友总数 -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200/80 custom-shadow card-hover">
+            <div class="flex justify-between items-start">
+              <div>
+                <p class="text-xs font-medium text-slate-500">企微私域沉淀好友</p>
+                <h3 class="text-2xl font-bold text-slate-900 mt-1.5">38,420 <span class="text-xs font-normal text-slate-400">人</span></h3>
+              </div>
+              <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-base">
+                <i class="fa-solid fa-users"></i>
+              </div>
+            </div>
+            <div class="mt-4 flex items-center justify-between text-xs">
+              <span class="text-emerald-600 font-semibold flex items-center gap-1">
+                <i class="fa-solid fa-arrow-trend-up"></i> +12.4%
+              </span>
+              <span class="text-slate-400">较上周净增 +428 人</span>
+            </div>
+          </div>
+
+          <!-- Metric 2: 今日新增与转化 -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200/80 custom-shadow card-hover">
+            <div class="flex justify-between items-start">
+              <div>
+                <p class="text-xs font-medium text-slate-500">今日被动/主动加微</p>
+                <h3 class="text-2xl font-bold text-slate-900 mt-1.5">186 <span class="text-xs font-normal text-slate-400">人</span></h3>
+              </div>
+              <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-base">
+                <i class="fa-solid fa-user-plus"></i>
+              </div>
+            </div>
+            <div class="mt-4 flex items-center justify-between text-xs">
+              <span class="text-blue-600 font-semibold flex items-center gap-1">
+                通过率 88.5%
+              </span>
+              <span class="text-slate-400">首购欢迎SOP已触达</span>
+            </div>
+          </div>
+
+          <!-- Metric 3: 社群活跃度 -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200/80 custom-shadow card-hover">
+            <div class="flex justify-between items-start">
+              <div>
+                <p class="text-xs font-medium text-slate-500">运营中企微社群</p>
+                <h3 class="text-2xl font-bold text-slate-900 mt-1.5">92 <span class="text-xs font-normal text-slate-400">个</span></h3>
+              </div>
+              <div class="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-base">
+                <i class="fa-solid fa-comments"></i>
+              </div>
+            </div>
+            <div class="mt-4 flex items-center justify-between text-xs">
+              <span class="text-purple-600 font-semibold flex items-center gap-1">
+                发言率 34.2%
+              </span>
+              <span class="text-slate-400">群成员累计 18,200</span>
+            </div>
+          </div>
+
+          <!-- Metric 4: 私域GMV贡献 (Dynamic label by mode) -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200/80 custom-shadow card-hover">
+            <div class="flex justify-between items-start">
+              <div>
+                <p id="kpi-revenue-title" class="text-xs font-medium text-slate-500">本月私域转化签约商机</p>
+                <h3 id="kpi-revenue-value" class="text-2xl font-bold text-slate-900 mt-1.5">￥786,000</h3>
+              </div>
+              <div class="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-base">
+                <i id="kpi-revenue-icon" class="fa-solid fa-file-contract"></i>
+              </div>
+            </div>
+            <div class="mt-4 flex items-center justify-between text-xs">
+              <span id="kpi-revenue-sub1" class="text-amber-600 font-semibold flex items-center gap-1">
+                合同转化率 31.5%
+              </span>
+              <span id="kpi-revenue-sub2" class="text-slate-400">平均成单周期 16天</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts & Operational Funnel Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- Main Chart: 7-Day Trend -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200/80 custom-shadow lg:col-span-2">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h4 class="font-bold text-slate-900 text-sm">加微净增与流失趋势 (近7日)</h4>
+                <p id="trend-desc" class="text-xs text-slate-400">追踪官网留资、广告投放、展会名片、转介绍活码等全触点获客</p>
+              </div>
+              <div class="flex gap-2">
+                <button class="px-2.5 py-1 text-xs font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200">按日</button>
+                <button class="px-2.5 py-1 text-xs font-medium rounded-md bg-emerald-50 text-emerald-700">近7天</button>
+                <button class="px-2.5 py-1 text-xs font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200">近30天</button>
+              </div>
+            </div>
+            <div class="h-64">
+              <canvas id="trendChart"></canvas>
+            </div>
+          </div>
+
+          <!-- Conversion Funnel & Channel Breakdown -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200/80 custom-shadow flex flex-col justify-between">
+            <div>
+              <h4 id="funnel-title" class="font-bold text-slate-900 text-sm mb-1">公域触点转私域服务漏斗</h4>
+              <p class="text-xs text-slate-400 mb-4">当前模式各阶段流转率</p>
+
+              <div id="funnel-steps-container" class="space-y-3 text-xs">
+                <!-- Funnel steps generated dynamically via JS -->
+              </div>
+            </div>
+
+            <div class="pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+              <span id="funnel-summary">商机跟进效率高于基准 +24.6%</span>
+              <button onclick="switchTab('sop')" class="text-emerald-600 font-medium hover:underline">优化跟进SOP &rarr;</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Today SOP Task List & Realtime Alerts -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <!-- Pending Staff SOP Tasks -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200/80 custom-shadow">
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                <h4 id="dashboard-task-title" class="font-bold text-slate-900 text-sm">今日专属顾问执行 SOP 任务</h4>
+              </div>
+              <span id="dashboard-task-summary" class="text-xs text-slate-400">待完成 2 / 共 3 项</span>
+            </div>
+
+            <div id="dashboard-tasks-container" class="space-y-2.5">
+              <!-- Rendered dynamically by business mode -->
+            </div>
+          </div>
+
+          <!-- Churn Risk & High Value Radar -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200/80 custom-shadow">
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                <h4 class="font-bold text-slate-900 text-sm">高危流失客户智能预警</h4>
+              </div>
+              <span class="text-xs text-rose-500 bg-rose-50 px-2 py-0.5 rounded font-medium">RFM监测模型</span>
+            </div>
+
+            <div class="space-y-3">
+              <div class="flex items-center justify-between p-3 border border-rose-100 bg-rose-50/40 rounded-xl">
+                <div class="flex items-center gap-3">
+                  <img src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=80&auto=format&fit=crop&q=80" class="w-8 h-8 rounded-full object-cover">
+                  <div>
+                    <div class="text-xs font-semibold text-slate-900">赵晴 (黑卡会员) <span class="text-[10px] text-rose-600 bg-rose-100 px-1.5 py-0.2 rounded ml-1">退群风险</span></div>
+                    <div class="text-[11px] text-slate-500">已 45 天无任何互动，退出了 "护肤二群"</div>
+                  </div>
+                </div>
+                <button onclick="openCustomerDrawerByName('赵晴')" class="px-2.5 py-1 text-xs border border-rose-200 text-rose-700 bg-white hover:bg-rose-50 rounded-lg">紧急挽留</button>
+              </div>
+
+              <div class="flex items-center justify-between p-3 border border-amber-100 bg-amber-50/40 rounded-xl">
+                <div class="flex items-center gap-3">
+                  <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=80&auto=format&fit=crop&q=80" class="w-8 h-8 rounded-full object-cover">
+                  <div>
+                    <div class="text-xs font-semibold text-slate-900">陈铭 (高客单新客) <span class="text-[10px] text-amber-600 bg-amber-100 px-1.5 py-0.2 rounded ml-1">静默 20 天</span></div>
+                    <div class="text-[11px] text-slate-500">累计消费 ￥1,480，近3条群发未点击</div>
+                  </div>
+                </div>
+                <button onclick="openCustomerDrawerByName('陈铭')" class="px-2.5 py-1 text-xs border border-amber-200 text-amber-700 bg-white hover:bg-amber-50 rounded-lg">查看画像</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================ -->
+      <!-- VIEW 2: CUSTOMER 360 (客户资产中心) -->
+      <!-- ============================================ -->
+      <div id="view-customers" class="space-y-4 hidden">
+        <!-- Customer Segment Filters Bar -->
+        <div class="bg-white p-4 rounded-2xl border border-slate-200/80 custom-shadow space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <!-- Filter Group: Lifecycle Stage -->
+            <div class="flex items-center gap-2 text-xs">
+              <span class="text-slate-400 font-medium">生命周期:</span>
+              <button onclick="filterCustomers('all')" class="filter-btn px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 font-semibold">全部 (38,420)</button>
+              <button onclick="filterCustomers('new')" class="filter-btn px-2.5 py-1 rounded-md text-slate-600 hover:bg-slate-100">新手期 (3,120)</button>
+              <button onclick="filterCustomers('mature')" class="filter-btn px-2.5 py-1 rounded-md text-slate-600 hover:bg-slate-100">成长期 (14,500)</button>
+              <button onclick="filterCustomers('loyal')" class="filter-btn px-2.5 py-1 rounded-md text-slate-600 hover:bg-slate-100">忠诚VIP (6,890)</button>
+              <button onclick="filterCustomers('churn')" class="filter-btn px-2.5 py-1 rounded-md text-slate-600 hover:bg-slate-100">流失预警 (840)</button>
+            </div>
+
+            <!-- Action buttons -->
+            <div class="flex items-center gap-2">
+              <button onclick="batchTagAction()" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium flex items-center gap-1.5 transition">
+                <i class="fa-solid fa-tags text-slate-500"></i>
+                <span>批量打标签</span>
+              </button>
+              <button onclick="openBroadcastModal()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition">
+                <i class="fa-solid fa-paper-plane text-xs"></i>
+                <span>定向筛选触达</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-4 text-xs text-slate-600">
+            <div class="flex items-center gap-2">
+              <span class="text-slate-400">渠道来源:</span>
+              <select class="bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none">
+                <option>全部渠道</option>
+                <option>淘宝包裹卡</option>
+                <option>线下智慧门店</option>
+                <option>抖音信息流投流</option>
+                <option>老带新裂变</option>
+              </select>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span class="text-slate-400">企微所属员工:</span>
+              <select class="bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none">
+                <option>全部员工</option>
+                <option>林晨 (总监)</option>
+                <option>王芳 (资深美妆顾问)</option>
+                <option>周萌 (客服组长)</option>
+              </select>
+            </div>
+
+            <div class="flex items-center gap-2 ml-auto">
+              <span class="text-slate-400">已选中的客户: <b id="selected-customer-count" class="text-emerald-600 font-semibold">0</b> 位</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Customer Data Table -->
+        <div class="bg-white rounded-2xl border border-slate-200/80 custom-shadow overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium">
+                  <th class="p-3.5 pl-4 w-8">
+                    <input type="checkbox" id="select-all-customers" onchange="toggleSelectAll(this)" class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">
+                  </th>
+                  <th class="p-3.5">客户基本资料</th>
+                  <th class="p-3.5">生命周期 / 意向等级</th>
+                  <th class="p-3.5">画像标签 (Tags)</th>
+                  <th class="p-3.5">获取渠道 / 来源</th>
+                  <th id="th-customer-value" class="p-3.5">预估商机预算</th>
+                  <th class="p-3.5">最近互动 / 跟进</th>
+                  <th class="p-3.5 pr-4 text-center">操作</th>
+                </tr>
+              </thead>
+              <tbody id="customer-table-body" class="divide-y divide-slate-100 text-slate-700">
+                <!-- Data populated dynamically via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Pagination -->
+          <div class="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <div>显示第 1 至 6 项客户（共 38,420 条）</div>
+            <div class="flex items-center gap-1.5">
+              <button class="px-2.5 py-1 border border-slate-200 rounded hover:bg-slate-50 disabled:opacity-50" disabled>上一页</button>
+              <button class="px-2.5 py-1 bg-emerald-600 text-white font-medium rounded">1</button>
+              <button class="px-2.5 py-1 border border-slate-200 rounded hover:bg-slate-50">2</button>
+              <button class="px-2.5 py-1 border border-slate-200 rounded hover:bg-slate-50">3</button>
+              <span>...</span>
+              <button class="px-2.5 py-1 border border-slate-200 rounded hover:bg-slate-50">384</button>
+              <button class="px-2.5 py-1 border border-slate-200 rounded hover:bg-slate-50">下一页</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================ -->
+      <!-- VIEW 3: GROUPS (社群矩阵与健康度) -->
+      <!-- ============================================ -->
+      <div id="view-groups" class="space-y-4 hidden">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="bg-white p-4 rounded-xl border border-slate-200/80">
+            <div class="text-xs text-slate-400">企微群总数</div>
+            <div class="text-2xl font-bold text-slate-900 mt-1">92 <span class="text-xs font-normal text-emerald-600">+3 本周新建</span></div>
+          </div>
+          <div class="bg-white p-4 rounded-xl border border-slate-200/80">
+            <div class="text-xs text-slate-400">平均群满载率</div>
+            <div class="text-2xl font-bold text-slate-900 mt-1">198 / 200 <span class="text-xs font-normal text-slate-500">人/群</span></div>
+          </div>
+          <div class="bg-white p-4 rounded-xl border border-slate-200/80">
+            <div class="text-xs text-slate-400">群内黑名单/广告踢出</div>
+            <div class="text-2xl font-bold text-slate-900 mt-1">14 <span class="text-xs font-normal text-amber-600">已智能拦截</span></div>
+          </div>
+        </div>
+
+        <!-- Groups Table -->
+        <div class="bg-white rounded-2xl border border-slate-200/80 custom-shadow overflow-hidden">
+          <div class="p-4 border-b border-slate-100 flex items-center justify-between">
+            <h4 class="font-bold text-sm text-slate-900">活跃社群矩阵看板</h4>
+            <div class="flex items-center gap-2">
+              <button onclick="showToast('已开启群活码自动裂变补群功能', 'success')" class="px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg text-xs font-medium transition">
+                <i class="fa-solid fa-qrcode mr-1"></i> 新建自动裂变活码
+              </button>
+            </div>
+          </div>
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium">
+                <th class="p-3.5 pl-4">企微社群名称</th>
+                <th class="p-3.5">群主 / 管理员</th>
+                <th class="p-3.5">群成员人数</th>
+                <th class="p-3.5">今日消息数</th>
+                <th class="p-3.5">自动SOP状态</th>
+                <th class="p-3.5">健康指数</th>
+                <th class="p-3.5 pr-4 text-center">快捷操作</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 text-slate-700">
+              <tr class="hover:bg-slate-50/80 transition">
+                <td class="p-3.5 pl-4 font-semibold text-slate-800 flex items-center gap-2">
+                  <span class="w-6 h-6 rounded-md bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs"><i class="fa-solid fa-users"></i></span>
+                  【美诺美妆】VIP护肤打卡交流01群
+                </td>
+                <td class="p-3.5">王芳 (顾问)</td>
+                <td class="p-3.5">
+                  <div class="flex items-center gap-2">
+                    <span>198/200</span>
+                    <span class="w-12 bg-slate-200 h-1.5 rounded-full overflow-hidden inline-block"><span class="bg-emerald-500 h-full block" style="width: 99%"></span></span>
+                  </div>
+                </td>
+                <td class="p-3.5 font-medium text-emerald-600">342 条</td>
+                <td class="p-3.5"><span class="px-2 py-0.5 rounded text-[10px] bg-emerald-50 text-emerald-700 font-medium">早晚签到 + 优惠秒杀</span></td>
+                <td class="p-3.5"><span class="text-xs font-bold text-emerald-600">96 分 (极度活跃)</span></td>
+                <td class="p-3.5 pr-4 text-center">
+                  <button onclick="showToast('已进入群互动话术库', 'info')" class="text-emerald-600 hover:underline">推送群任务</button>
+                </td>
+              </tr>
+
+              <tr class="hover:bg-slate-50/80 transition">
+                <td class="p-3.5 pl-4 font-semibold text-slate-800 flex items-center gap-2">
+                  <span class="w-6 h-6 rounded-md bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs"><i class="fa-solid fa-users"></i></span>
+                  【美诺美妆】新品体验专享03群
+                </td>
+                <td class="p-3.5">周萌 (客服)</td>
+                <td class="p-3.5">
+                  <div class="flex items-center gap-2">
+                    <span>174/200</span>
+                    <span class="w-12 bg-slate-200 h-1.5 rounded-full overflow-hidden inline-block"><span class="bg-teal-500 h-full block" style="width: 87%"></span></span>
+                  </div>
+                </td>
+                <td class="p-3.5 font-medium text-slate-700">128 条</td>
+                <td class="p-3.5"><span class="px-2 py-0.5 rounded text-[10px] bg-emerald-50 text-emerald-700 font-medium">新品试用SOP</span></td>
+                <td class="p-3.5"><span class="text-xs font-bold text-teal-600">84 分 (良好)</span></td>
+                <td class="p-3.5 pr-4 text-center">
+                  <button onclick="showToast('已进入群互动话术库', 'info')" class="text-emerald-600 hover:underline">推送群任务</button>
+                </td>
+              </tr>
+
+              <tr class="hover:bg-slate-50/80 transition">
+                <td class="p-3.5 pl-4 font-semibold text-slate-800 flex items-center gap-2">
+                  <span class="w-6 h-6 rounded-md bg-amber-100 text-amber-700 flex items-center justify-center text-xs"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                  【美诺美妆】华东线下会员福利08群
+                </td>
+                <td class="p-3.5">林晨 (总监)</td>
+                <td class="p-3.5">
+                  <div class="flex items-center gap-2">
+                    <span>140/200</span>
+                    <span class="w-12 bg-slate-200 h-1.5 rounded-full overflow-hidden inline-block"><span class="bg-amber-500 h-full block" style="width: 70%"></span></span>
+                  </div>
+                </td>
+                <td class="p-3.5 font-medium text-amber-600">12 条 (较冷清)</td>
+                <td class="p-3.5"><span class="px-2 py-0.5 rounded text-[10px] bg-amber-50 text-amber-700 font-medium">唤醒红包SOP</span></td>
+                <td class="p-3.5"><span class="text-xs font-bold text-amber-600">58 分 (需干预)</span></td>
+                <td class="p-3.5 pr-4 text-center">
+                  <button onclick="showToast('已向该群派发互动红包任务', 'success')" class="text-amber-600 hover:underline">红包唤醒</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ============================================ -->
+      <!-- VIEW 4: SOP AUTOMATION (自动化运营流程) -->
+      <!-- ============================================ -->
+      <div id="view-sop" class="space-y-6 hidden">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2">
+              <h4 class="font-bold text-slate-900 text-sm">自动化 SOP 策略流引擎</h4>
+              <span id="sop-mode-badge" class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">B端大客户培育矩阵</span>
+            </div>
+            <p id="sop-mode-desc" class="text-xs text-slate-500 mt-0.5">根据企微客户阶段、意向行为、决策角色自动触发精细化策略流</p>
+          </div>
+          <button onclick="showToast('已进入自定义SOP策略编排画布', 'success')" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition">
+            <i class="fa-solid fa-plus text-xs"></i>
+            <span>新建阶段自动化 SOP</span>
+          </button>
+        </div>
+
+        <!-- SOP Flow Visualizer Card -->
+        <div id="sop-flow-container" class="bg-white rounded-2xl border border-slate-200/80 p-6 custom-shadow">
+          <!-- Flow generated dynamically via JS -->
+        </div>
+
+        <!-- Other Available SOP Templates -->
+        <div>
+          <div class="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">场景 SOP 策略库与阶段模板</div>
+          <div id="sop-templates-container" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- Templates generated dynamically via JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================ -->
+      <!-- VIEW 5: BROADCAST & TASKS (精准触达) -->
+      <!-- ============================================ -->
+      <div id="view-broadcast" class="space-y-4 hidden">
+        <div class="bg-white p-5 rounded-2xl border border-slate-200/80 custom-shadow flex items-center justify-between">
+          <div>
+            <h4 class="font-bold text-slate-900 text-sm">精准群发与朋友圈宣发助手</h4>
+            <p class="text-xs text-slate-400 mt-0.5">严格遵循企微官方频次限制规则，合规触达每一位高价值客户</p>
+          </div>
+          <button onclick="openBroadcastModal()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium flex items-center gap-2 shadow-sm transition">
+            <i class="fa-solid fa-bullhorn text-xs"></i>
+            <span>创建企微群发推送</span>
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div class="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 custom-shadow overflow-hidden">
+            <div class="p-4 border-b border-slate-100 font-bold text-sm text-slate-800">最近触达记录列表</div>
+            <div class="divide-y divide-slate-100 text-xs">
+              <div class="p-4 hover:bg-slate-50 transition flex items-center justify-between">
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 bg-emerald-50 text-emerald-700 font-semibold rounded">客户群发</span>
+                    <span class="font-bold text-slate-900">秋季保湿水光精华首发专享价推送</span>
+                  </div>
+                  <div class="text-slate-400 mt-1 text-[11px]">推送范围: 标签含 [干皮/混干] 且 消费>￥300 | 覆盖 4,280 人</div>
+                </div>
+                <div class="text-right">
+                  <div class="text-emerald-600 font-bold text-xs">导购已发送 94%</div>
+                  <div class="text-slate-400 text-[10px]">昨日 14:00</div>
+                </div>
+              </div>
+
+              <div class="p-4 hover:bg-slate-50 transition flex items-center justify-between">
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 bg-blue-50 text-blue-700 font-semibold rounded">企业朋友圈</span>
+                    <span class="font-bold text-slate-900">周年庆线下美妆沙龙免费报名征集</span>
+                  </div>
+                  <div class="text-slate-400 mt-1 text-[11px]">推送员工: 全体销售顾问 | 浏览量 1,890</div>
+                </div>
+                <div class="text-right">
+                  <div class="text-emerald-600 font-bold text-xs">执行率 100%</div>
+                  <div class="text-slate-400 text-[10px]">3天前</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Enterprise WeChat Rules Guide -->
+          <div class="bg-slate-50 p-5 rounded-2xl border border-slate-200">
+            <h5 class="font-bold text-slate-800 text-xs mb-3 flex items-center gap-2">
+              <i class="fa-brands fa-weixin text-emerald-600"></i>
+              官方企微触达配额规则
+            </h5>
+            <div class="space-y-3 text-xs text-slate-600">
+              <div class="p-3 bg-white rounded-xl border border-slate-200/80">
+                <div class="font-semibold text-slate-800">企业群发限制</div>
+                <p class="text-[11px] text-slate-500 mt-0.5">每位客户每个自然月最多接收企业群发 <b class="text-emerald-600">4次</b>。</p>
+              </div>
+              <div class="p-3 bg-white rounded-xl border border-slate-200/80">
+                <div class="font-semibold text-slate-800">企业朋友圈限制</div>
+                <p class="text-[11px] text-slate-500 mt-0.5">企业每月可统一发表 <b class="text-emerald-600">4条</b>，员工个人每天发表 <b class="text-emerald-600">3条</b>。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- ============================================ -->
+  <!-- DRAWER: CUSTOMER 360° PROFILE (侧滑画像抽屉) -->
+  <!-- ============================================ -->
+  <div id="drawer-backdrop" onclick="closeCustomerDrawer()" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-40 transition-opacity opacity-0 pointer-events-none duration-300"></div>
+
+  <aside id="customer-drawer" class="fixed right-0 top-0 bottom-0 w-full sm:max-w-md md:max-w-xl bg-white shadow-2xl z-50 drawer-closed transition-transform duration-300 flex flex-col">
+    <!-- Drawer Header -->
+    <div class="p-4 md:p-6 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+      <div class="flex items-center gap-3">
+        <img id="drawer-avatar" src="" alt="Avatar" class="w-12 h-12 rounded-full object-cover border-2 border-white shadow-sm shrink-0">
+        <div>
+          <div class="flex items-center gap-2">
+            <h3 id="drawer-name" class="font-bold text-slate-900 text-base">--</h3>
+            <span id="drawer-gender" class="text-xs text-slate-400"></span>
+            <span id="drawer-level" class="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full">VIP</span>
+          </div>
+          <div class="text-xs text-slate-500 flex flex-wrap items-center gap-1 md:gap-2 mt-0.5">
+            <span>企微: <span id="drawer-wechat-nick" class="font-medium text-slate-700">--</span></span>
+            <span>·</span>
+            <span>顾问: <span id="drawer-staff" class="text-emerald-600 font-medium">--</span></span>
+          </div>
+        </div>
+      </div>
+      <button onclick="closeCustomerDrawer()" class="w-8 h-8 rounded-lg hover:bg-slate-200/80 flex items-center justify-center text-slate-400 hover:text-slate-700 transition">
+        <i class="fa-solid fa-xmark text-base"></i>
+      </button>
+    </div>
+
+    <!-- Drawer Body -->
+    <div class="flex-1 overflow-y-auto p-6 space-y-6">
+      <!-- Dynamic Metric Cards: Supports Retail (Spend/Orders) & Service (Budget/Touchpoints) -->
+      <div class="grid grid-cols-3 gap-3">
+        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
+          <div id="drawer-metric1-label" class="text-[11px] text-slate-400">商机预估/消费</div>
+          <div id="drawer-spend" class="text-base font-bold text-slate-900 mt-0.5">￥0</div>
+        </div>
+        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
+          <div id="drawer-metric2-label" class="text-[11px] text-slate-400">跟进/下单频次</div>
+          <div id="drawer-orders" class="text-base font-bold text-slate-900 mt-0.5">0 次</div>
+        </div>
+        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
+          <div class="text-[11px] text-slate-400">客户健康/意向</div>
+          <div id="drawer-health" class="text-base font-bold text-emerald-600 mt-0.5">健康活跃</div>
+        </div>
+      </div>
+
+      <!-- Quick Operational Action Buttons (Universal Tool Matrix) -->
+      <div>
+        <div class="text-xs font-bold text-slate-900 uppercase tracking-wider mb-2">私域运营触达工具</div>
+        <div class="grid grid-cols-3 gap-2">
+          <button onclick="triggerUniversalAction('send_doc')" class="p-2.5 bg-slate-50 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 border border-slate-200/80 rounded-xl text-xs font-medium flex flex-col items-center gap-1 transition">
+            <i class="fa-solid fa-file-lines text-emerald-600 text-sm"></i>
+            <span id="btn-label-doc">发送资料/方案</span>
+          </button>
+          <button onclick="triggerUniversalAction('book_meeting')" class="p-2.5 bg-slate-50 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-slate-200/80 rounded-xl text-xs font-medium flex flex-col items-center gap-1 transition">
+            <i class="fa-solid fa-calendar-check text-blue-600 text-sm"></i>
+            <span id="btn-label-meeting">邀约到店/会面</span>
+          </button>
+          <button onclick="triggerUniversalAction('benefit')" class="p-2.5 bg-slate-50 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 border border-slate-200/80 rounded-xl text-xs font-medium flex flex-col items-center gap-1 transition">
+            <i class="fa-solid fa-gift text-amber-600 text-sm"></i>
+            <span id="btn-label-benefit">发放礼券/权益</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Tags Management Section -->
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="text-xs font-bold text-slate-900 uppercase tracking-wider">智能与业务标签 (Tags)</h4>
+          <button onclick="addCustomTag()" class="text-xs text-emerald-600 hover:underline font-medium">+ 添加标签</button>
+        </div>
+        <div id="drawer-tags-container" class="flex flex-wrap gap-1.5">
+          <!-- Dynamic tags -->
+        </div>
+      </div>
+
+      <!-- Unified Timeline: Journey & Touchpoints (Full omnichannel history) -->
+      <div>
+        <h4 class="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">全生命周期旅程追踪</h4>
+        <div class="relative pl-6 space-y-5 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200" id="drawer-timeline">
+          <!-- Timeline entries populated dynamically via JavaScript -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Drawer Footer Actions -->
+    <div class="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+      <div class="text-[11px] text-slate-400">
+        <i class="fa-solid fa-shield-halved text-emerald-500 mr-1"></i>企微合规会话存档已就绪
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="triggerUniversalAction('quick_note')" class="px-3 py-1.5 border border-slate-300 hover:bg-white text-slate-700 rounded-lg text-xs font-medium">写跟进纪要</button>
+        <button onclick="showToast('已直接唤起该客户的企业微信一对一会话窗口', 'info')" class="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 shadow-sm active:scale-95 transition">
+          <i class="fa-brands fa-weixin"></i>
+          <span>发起企微会话</span>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============================================ -->
+  <!-- MODAL: CREATE BROADCAST TASK (新建群发任务弹窗) -->
+  <!-- ============================================ -->
+  <div id="broadcast-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center hidden">
+    <div class="bg-white rounded-2xl max-w-2xl w-full mx-4 shadow-2xl overflow-hidden border border-slate-100 flex flex-col max-h-[90vh]">
+      <!-- Header -->
+      <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+        <div>
+          <h3 class="font-bold text-slate-900 text-base">新建精准客户群发任务</h3>
+          <p class="text-xs text-slate-400 mt-0.5">创建后将分发至相关导购的企业微信端，导购一键确认即刻推送</p>
+        </div>
+        <button onclick="closeBroadcastModal()" class="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <!-- Form Content -->
+      <div class="p-6 overflow-y-auto space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">任务名称</label>
+          <input type="text" id="task-title-input" value="【初秋换季】敏感肌专研精华专属尝鲜礼" class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-emerald-500 focus:outline-none">
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">目标受众筛选</label>
+            <select class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none">
+              <option>按标签: [敏感肌护肤] 且 [客单>200] (2,410人)</option>
+              <option>全部私域好友 (38,420人)</option>
+              <option>流失高危客户 (840人)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">执行导购人员</label>
+            <select class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none">
+              <option>对应客户专属跟进导购 (全员)</option>
+              <option>仅指定资深顾问组</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">推送文案内容 (自动带入客户企微昵称变量)</label>
+          <textarea id="task-msg-input" rows="3" class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-emerald-500 focus:outline-none leading-relaxed">亲爱的 #{客户昵称}，秋季干燥换季敏感是不是又困扰你了？为你专属申请了一份【敏感肌修护小样尝鲜礼包】，点击下方链接即可0元免邮申领哦~</textarea>
+        </div>
+
+        <!-- WeChat Chat Preview Box -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">企微端发送预览效果</label>
+          <div class="bg-slate-100 p-4 rounded-xl flex items-start gap-3">
+            <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80" class="w-9 h-9 rounded-full object-cover">
+            <div class="max-w-md">
+              <div class="text-[10px] text-slate-400 mb-1">林晨 (美诺美妆资深顾问)</div>
+              <div class="bg-white p-3 rounded-2xl rounded-tl-none shadow-sm text-xs text-slate-800 leading-normal" id="preview-text">
+                亲爱的 #{客户昵称}，秋季干燥换季敏感是不是又困扰你了？为你专属申请了一份【敏感肌修护小样尝鲜礼包】，点击下方链接即可0元免邮申领哦~
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-end gap-2">
+        <button onclick="closeBroadcastModal()" class="px-4 py-2 border border-slate-200 text-slate-600 rounded-lg text-xs font-medium hover:bg-white">取消</button>
+        <button onclick="submitBroadcastTask()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium">确认创建并下发</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- CUSTOM MODAL: ADD TAG (移动端友好标签输入弹窗) -->
+  <!-- ============================================ -->
+  <div id="tag-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-slate-100 space-y-4">
+      <div class="flex items-center justify-between">
+        <h4 class="font-bold text-slate-900 text-sm">添加客户标签</h4>
+        <button onclick="closeTagModal()" class="text-slate-400 hover:text-slate-600">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">标签名称</label>
+        <input type="text" id="tag-input-value" placeholder="例如: 敏感肌、孕妈护肤、高复购客群" class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-emerald-500 focus:outline-none">
+        <!-- Quick Tag Presets -->
+        <div class="flex flex-wrap gap-1.5 mt-2">
+          <span onclick="setTagPreset('敏感肌护肤')" class="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-[11px] cursor-pointer hover:bg-emerald-50 hover:text-emerald-700">+ 敏感肌护肤</span>
+          <span onclick="setTagPreset('复购狂魔')" class="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-[11px] cursor-pointer hover:bg-emerald-50 hover:text-emerald-700">+ 复购狂魔</span>
+          <span onclick="setTagPreset('价格敏感型')" class="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-[11px] cursor-pointer hover:bg-emerald-50 hover:text-emerald-700">+ 价格敏感型</span>
+          <span onclick="setTagPreset('线下体验官')" class="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-[11px] cursor-pointer hover:bg-emerald-50 hover:text-emerald-700">+ 线下体验官</span>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button onclick="closeTagModal()" class="px-3 py-1.5 text-xs text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">取消</button>
+        <button onclick="confirmCustomTag()" class="px-3.5 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium">确认打标</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- MOBILE BOTTOM NAVIGATION (移动端底部触控导航栏) -->
+  <!-- ============================================ -->
+  <nav class="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200/90 flex items-center justify-around py-1.5 px-2 shadow-lg">
+    <button onclick="switchTab('dashboard')" id="mobile-nav-dashboard" class="mobile-nav-btn flex flex-col items-center justify-center p-1 text-emerald-600 flex-1">
+      <i class="fa-solid fa-chart-pie text-base mb-0.5"></i>
+      <span class="text-[10px] font-medium leading-none">监控看板</span>
+    </button>
+
+    <button onclick="switchTab('customers')" id="mobile-nav-customers" class="mobile-nav-btn flex flex-col items-center justify-center p-1 text-slate-500 hover:text-slate-800 flex-1">
+      <i class="fa-solid fa-user-tag text-base mb-0.5"></i>
+      <span class="text-[10px] font-medium leading-none">客户360</span>
+    </button>
+
+    <button onclick="switchTab('groups')" id="mobile-nav-groups" class="mobile-nav-btn flex flex-col items-center justify-center p-1 text-slate-500 hover:text-slate-800 flex-1">
+      <i class="fa-solid fa-comments text-base mb-0.5"></i>
+      <span class="text-[10px] font-medium leading-none">社群运营</span>
+    </button>
+
+    <button onclick="switchTab('sop')" id="mobile-nav-sop" class="mobile-nav-btn flex flex-col items-center justify-center p-1 text-slate-500 hover:text-slate-800 flex-1">
+      <i class="fa-solid fa-bolt-lightning text-base mb-0.5"></i>
+      <span class="text-[10px] font-medium leading-none">SOP策略</span>
+    </button>
+
+    <button onclick="switchTab('broadcast')" id="mobile-nav-broadcast" class="mobile-nav-btn flex flex-col items-center justify-center p-1 text-slate-500 hover:text-slate-800 flex-1">
+      <i class="fa-solid fa-bullhorn text-base mb-0.5"></i>
+      <span class="text-[10px] font-medium leading-none">精准群发</span>
+    </button>
+  </nav>
+
+  <!-- Toast Notification Container -->
+  <div id="toast" class="fixed bottom-20 md:bottom-5 right-5 z-50 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none flex items-center gap-2.5 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-xl text-xs font-medium">
+    <i id="toast-icon" class="fa-solid fa-circle-check text-emerald-400"></i>
+    <span id="toast-msg">通知信息</span>
+  </div>
+
+  <script>
+    // ============================================
+    // Universal Business Mode & Mock Data State
+    // ============================================
+    let currentBusinessMode = 'service'; // 'service' (B端: 企服/大客户/线索) or 'retail' (C端: 消费零售/电商)
+
+    const datasetByMode = {
+      service: {
+        modeLabel: 'B端·线索与大客户',
+        orgBadge: '企',
+        orgName: '知行智远·企服咨询与解决方案',
+        orgSub: '已授权 18 位大客户顾问与售前专家',
+        kpiRevenueTitle: '本月私域转化签约商机',
+        kpiRevenueValue: '￥786,000',
+        kpiRevenueIcon: 'fa-solid fa-file-contract',
+        kpiSub1: '合同转化率 31.5%',
+        kpiSub2: '平均成单周期 16天',
+        metric1Label: '商机预估价值',
+        metric2Label: '顾问跟进轮次',
+        valueColTitle: '商机预估/预算',
+        funnelTitle: 'B端线索MQL到合同签约漏斗',
+        trendDesc: '追踪官网白皮书下载、广告留资、行业峰会名片、转介绍活码',
+        funnelSummary: '商机推进速度高于同行业 +24.6%',
+        funnelSteps: [
+          { name: '1. 公域广告/官网/展会留资', count: '10,800', pct: '100%', color: 'bg-slate-400' },
+          { name: '2. 扫码添加企微咨询顾问', count: '3,240 (30.0%)', pct: '62%', color: 'bg-teal-500' },
+          { name: '3. 需求清洗与方案初审 (SQL)', count: '2,150 (66.3%)', pct: '44%', color: 'bg-emerald-500' },
+          { name: '4. 方案演示/深度试用/线下面谈', count: '1,120 (52.1%)', pct: '28%', color: 'bg-brand-600' },
+          { name: '5. 商务谈判并签约付费', count: '353 (31.5%)', pct: '15%', color: 'bg-amber-500' }
+        ],
+        dashboardTaskTitle: '今日专属顾问执行 SOP 任务',
+        dashboardTaskSummary: '待完成 2 / 共 3 项',
+        dashboardTasks: [
+          {
+            icon: 'fa-solid fa-calendar-check',
+            iconBg: 'bg-emerald-100 text-emerald-700',
+            title: '高意向线索 24h 内诊断会邀约',
+            sub: '目标: 12 位 SQL 意向客户 | 诊断问卷与会议日历已生成',
+            actionText: '一键推进',
+            done: false
+          },
+          {
+            icon: 'fa-solid fa-file-invoice',
+            iconBg: 'bg-blue-100 text-blue-700',
+            title: '方案报价阶段决策人回访 (方案发送后第3天)',
+            sub: '目标: 6 家已审阅方案企业 | 采购部跟进话术已就绪',
+            actionText: '一键推进',
+            done: false
+          },
+          {
+            icon: 'fa-solid fa-check',
+            iconBg: 'bg-slate-200 text-slate-600',
+            title: '官网白皮书下载自动培育触达',
+            sub: '系统已自动为 48 位新加微客户下发标杆案例库',
+            actionText: '已完成',
+            done: true
+          }
+        ],
+        sopModeBadge: 'B端大客户培育与商机推进流',
+        sopModeDesc: '以专业内容、决策人穿透、一对一诊断为核心驱动线索从 MQL 晋级为 SQL 并签约',
+        sopFlow: {
+          title: '【B端核心流】高价值线索 14 天 MQL 到 SQL 深度赋能与商机推进 SOP',
+          trigger: '触发条件: 官网白皮书留资 / 行业峰会名片 / 广告线索添加企微顾问',
+          stats: '已跑通 890 家企业 | SQL 晋级率 36.8% | 平均缩短跟进周期 12天',
+          steps: [
+            {
+              phase: '步骤 1 · 立即',
+              icon: 'fa-solid fa-file-shield text-emerald-600',
+              title: '下发行业白皮书与调研',
+              desc: '发送《2026行业数字化方案及案例集》，附需求调研表单自动提取组织规模',
+              badge: '触达率: 99.4%',
+              badgeColor: 'text-emerald-600 bg-emerald-50'
+            },
+            {
+              phase: '步骤 2 · 24小时内',
+              icon: 'fa-solid fa-phone-volume text-blue-600',
+              title: '顾问 1v1 预约诊断会',
+              desc: '提醒顾问发起 30 分钟线上腾讯会议，输出专属业务痛点与技术架构诊断报告',
+              badge: '会议邀约率: 38.5%',
+              badgeColor: 'text-blue-600 bg-blue-50'
+            },
+            {
+              phase: '步骤 3 · 第 5 天',
+              icon: 'fa-solid fa-chart-line text-purple-600',
+              title: '标杆客户视频与评级',
+              desc: '根据白皮书停留阅读时长智能计算意向分，自动触发大客户经理分配规则',
+              badge: 'MQL晋级: 54.2%',
+              badgeColor: 'text-purple-600 bg-purple-50'
+            },
+            {
+              phase: '步骤 4 · 第 14 天',
+              icon: 'fa-solid fa-users-rectangle text-amber-600',
+              title: '组建专家群与商务方案',
+              desc: '联合技术总监与商务顾问建立专属对接群，正式递交方案报价与 POC 测试',
+              badge: '成单转化: 31.5%',
+              badgeColor: 'text-amber-600 bg-amber-50'
+            }
+          ]
+        },
+        sopTemplates: [
+          {
+            title: '大客户招投标与方案 7天 推进流',
+            desc: '方案下发后每隔 48 小时自动跟进技术评审意见与采购合规进度',
+            stat: '推进达成率 68.2%'
+          },
+          {
+            title: '沉睡企业线索 60天 专家沙龙激活流',
+            desc: '对未签约线索推送闭门研讨会门票与季度前沿行业洞察报告',
+            stat: '二次唤醒率 21.4%'
+          },
+          {
+            title: '客户成功 CSM 30/60/90天 续约陪伴流',
+            desc: '交付验收后定期自动化回访系统使用健康度，提前锁定次年续费',
+            stat: '客户留存续费率 94.6%'
+          }
+        ],
+        customers: [
+          {
+            id: 'S1001',
+            name: '苏曼宁',
+            wechatNick: 'Manning_Su🌱',
+            avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
+            gender: '女',
+            stage: 'loyal',
+            stageText: '已签约交付',
+            stageColor: 'bg-emerald-100 text-emerald-800',
+            tags: ['数字化转型', 'B2B中型企业', '预算充足', '已付首期'],
+            channel: '官网白皮书下载留资',
+            value: '￥180,000',
+            activityCount: 8,
+            lastActive: '10分钟前',
+            staff: '王芳 (高级咨询总监)',
+            health: '高价值健康 (意向A级)',
+            timeline: [
+              { title: '完成年度企服咨询签约 ￥180,000', desc: '经两轮线上方案演示与线下拜访，达成全年深度战略合作', time: '前天 16:20 · 企微对公合同' },
+              { title: '参加线上 VIP 行业沙龙直播', desc: '参与了《2026数字化增长策略》闭门研讨会并提问互动', time: '4天前 20:00 · 视频号/腾讯会议' },
+              { title: '官网下载《行业白皮书》添加企微顾问', desc: '填写企业需求表单，自动触发企服SOP分配给顾问王芳', time: '12天前 14:15 · 官网表单引流' }
+            ]
+          },
+          {
+            id: 'S1002',
+            name: '赵晴',
+            wechatNick: 'Sunny☀️',
+            avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&auto=format&fit=crop&q=80',
+            gender: '女',
+            stage: 'churn',
+            stageText: '停滞/流失预警',
+            stageColor: 'bg-rose-100 text-rose-800',
+            tags: ['课程培训', '30天未回访', '试听后未反馈'],
+            channel: '巨量千川广告留资',
+            value: '￥12,800',
+            activityCount: 2,
+            lastActive: '30天前',
+            staff: '林晨 (业务负责人)',
+            health: '预警停滞 (意向C级)',
+            timeline: [
+              { title: '试听课程资料发送完毕，无回复', desc: '已下发《高管领导力进阶试听包》，多次企微留言未读', time: '20天前 11:00 · 一对一私聊' },
+              { title: '广告表单留资添加企微', desc: '领取试听名额后加微，仅完成初步电话需求确认', time: '30天前 15:30 · 广告投放' }
+            ]
+          },
+          {
+            id: 'S1003',
+            name: '陈铭',
+            wechatNick: 'Calvin.C',
+            avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80',
+            gender: '男',
+            stage: 'mature',
+            stageText: '方案报价阶段',
+            stageColor: 'bg-blue-100 text-blue-800',
+            tags: ['采购决策人', '定制方案中', '高客单潜在客户'],
+            channel: '行业峰会展位扫码',
+            value: '￥65,000',
+            activityCount: 5,
+            lastActive: '昨天',
+            staff: '王芳 (高级咨询总监)',
+            health: '积极跟进中 (意向A级)',
+            timeline: [
+              { title: '向客户发送定制报价单与技术白皮书', desc: '针对其组织架构定制了二期实施方案，等待采购委员会审核', time: '昨天 17:10 · 企微微盘文件' },
+              { title: '完成 45 分钟企微视频需求诊断会', desc: '梳理出 4 项关键核心痛点与交付时间节点', time: '3天前 14:00 · 企微会议' },
+              { title: '线下行业论坛展台扫码添加好友', desc: '现场体验演示产品后索取详细资料', time: '1周前 10:30 · 线下展会名片' }
+            ]
+          },
+          {
+            id: 'S1004',
+            name: '李小雅',
+            wechatNick: '雅雅子喵~',
+            avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=100&auto=format&fit=crop&q=80',
+            gender: '女',
+            stage: 'new',
+            stageText: '新线索初步沟通',
+            stageColor: 'bg-teal-100 text-teal-800',
+            tags: ['咨询预约', '待安排电话', '初创团队'],
+            channel: '老客户口碑转介绍',
+            value: '￥28,000',
+            activityCount: 1,
+            lastActive: '2小时前',
+            staff: '周萌 (售前顾问)',
+            health: '新人活跃 (意向B级)',
+            timeline: [
+              { title: '通过老客户名片分享添加企微', desc: '由VIP客户苏总引荐，系统已自动下发专属服务介绍卡片', time: '2小时前 16:00 · 名片裂变' }
+            ]
+          }
+        ]
+      },
+      retail: {
+        modeLabel: 'C端·消费与会员零售',
+        orgBadge: '美',
+        orgName: '美诺美妆·品牌企微总部',
+        orgSub: '已授权 18 个门店导购与私域客服',
+        kpiRevenueTitle: '本月私域专属转化 GMV',
+        kpiRevenueValue: '￥412,850',
+        kpiRevenueIcon: 'fa-solid fa-hand-holding-dollar',
+        kpiSub1: '客单价 ￥268',
+        kpiSub2: '复购贡献率 46.8%',
+        metric1Label: '私域累计消费',
+        metric2Label: '商城下单频次',
+        valueColTitle: '私域累计消费',
+        funnelTitle: '公域引流转私域首购漏斗',
+        trendDesc: '实时追踪包裹卡、门店扫码、社媒投流等渠道获客',
+        funnelSummary: '首购转化率高于行业基准 +18.4%',
+        funnelSteps: [
+          { name: '1. 公域触达/包裹卡曝光', count: '12,500', pct: '100%', color: 'bg-slate-400' },
+          { name: '2. 扫码发起好友申请', count: '4,120 (32.9%)', pct: '65%', color: 'bg-teal-500' },
+          { name: '3. 企微自动通过并留存', count: '3,650 (88.6%)', pct: '55%', color: 'bg-emerald-500' },
+          { name: '4. 进VIP社群并领券', count: '1,980 (54.2%)', pct: '38%', color: 'bg-brand-600' },
+          { name: '5. 7天内产生私域首购', count: '842 (42.5%)', pct: '22%', color: 'bg-amber-500' }
+        ],
+        dashboardTaskTitle: '今日门店导购执行 SOP 任务',
+        dashboardTaskSummary: '待完成 3 / 共 5 项',
+        dashboardTasks: [
+          {
+            icon: 'fa-solid fa-gift',
+            iconBg: 'bg-emerald-100 text-emerald-700',
+            title: '新客户首单回访关怀 (添加后第3天)',
+            sub: '目标: 54 位新客 | 专属满减券已自动附带',
+            actionText: '一键派发',
+            done: false
+          },
+          {
+            icon: 'fa-solid fa-cake-candles',
+            iconBg: 'bg-blue-100 text-blue-700',
+            title: '本周生日高价值会员专属礼券推送',
+            sub: '目标: 18 位黑金VIP | 满300减80券自动下发',
+            actionText: '一键派发',
+            done: false
+          },
+          {
+            icon: 'fa-solid fa-check',
+            iconBg: 'bg-slate-200 text-slate-600',
+            title: '早安社群互动秒杀话题 (09:30 定时)',
+            sub: '全员 92 个企微社群已自动推送完成',
+            actionText: '已完成',
+            done: true
+          }
+        ],
+        sopModeBadge: 'C端快消高频触达与首购SOP',
+        sopModeDesc: '基于优惠券、限时秒杀、包裹卡福利快速激发首次购买与社群裂变',
+        sopFlow: {
+          title: '【C端首购流】新客添加后 48 小时黄金首单领券转化 SOP',
+          trigger: '触发条件: 扫描快递包裹卡 / 线下门店立牌添加企微好友',
+          stats: '已跑通 3,240 人次 | 首购率 41.2% | 优惠券核销用券率 58.6%',
+          steps: [
+            {
+              phase: '步骤 1 · 立即',
+              icon: 'fa-solid fa-ticket text-emerald-600',
+              title: '发送个性化欢迎语与立减券',
+              desc: '下发 15 元无门槛新客立减券，自动引导绑定会员并推送爆款清单',
+              badge: '领券率: 99.8%',
+              badgeColor: 'text-emerald-600 bg-emerald-50'
+            },
+            {
+              phase: '步骤 2 · 24小时后',
+              icon: 'fa-solid fa-hourglass-half text-blue-600',
+              title: '未用券关怀催化话术',
+              desc: '针对尚未在微店下单的新客，提醒礼券将于 24 小时后失效',
+              badge: '用券转化: 28.4%',
+              badgeColor: 'text-blue-600 bg-blue-50'
+            },
+            {
+              phase: '步骤 3 · 48小时后',
+              icon: 'fa-solid fa-comments-dollar text-purple-600',
+              title: '精准拉入福利社群',
+              desc: '下发专属进群邀请链接，参与每周四会员日专享 1 元秒杀与抽奖',
+              badge: '进群率: 61.5%',
+              badgeColor: 'text-purple-600 bg-purple-50'
+            }
+          ]
+        },
+        sopTemplates: [
+          {
+            title: '沉睡客户 30天 唤醒流',
+            desc: '针对超一个月无互动用户分批次赠送复购津贴与新品小样',
+            stat: '唤醒成功率 14.8%'
+          },
+          {
+            title: '高客单售后 7天 关怀流',
+            desc: '单笔订单>500元自动触发使用指导视频与满意度评价调研',
+            stat: '好评返购率 99.1%'
+          },
+          {
+            title: '退群预警自动化挽回',
+            desc: '用户主动退出企微群时，专属导购自动接收私聊挽回与问卷任务',
+            stat: '挽回留存率 24.3%'
+          }
+        ],
+        customers: [
+          {
+            id: 'C1001',
+            name: '苏曼宁',
+            wechatNick: 'Manning_Su🌱',
+            avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
+            gender: '女',
+            stage: 'loyal',
+            stageText: '高忠诚VIP',
+            stageColor: 'bg-emerald-100 text-emerald-800',
+            tags: ['敏感肌护肤', '高客单', '社群活跃KOC', '月度复购'],
+            channel: '天猫旗舰店包裹卡',
+            value: '￥3,480',
+            activityCount: 9,
+            lastActive: '10分钟前',
+            staff: '王芳 (美妆顾问)',
+            health: '极度健康 (RFM 555)',
+            timeline: [
+              { title: '完成专属订单 ￥429.00', desc: '购买了【美诺多肽修护原液套盒】，使用15元私域专属券', time: '昨天 15:32 · 小程序/专属微店' },
+              { title: '加入 VIP 护肤打卡交流群', desc: '经导购邀请进群，参与了群打卡秒杀抽奖', time: '3天前 10:14 · 企微社群' },
+              { title: '扫描快递包裹卡添加企微好友', desc: '通过天猫包裹内附“扫码领试用装”卡片扫码，自动触发新手SOP', time: '5天前 09:20 · 活码引流' }
+            ]
+          },
+          {
+            id: 'C1002',
+            name: '赵晴',
+            wechatNick: 'Sunny☀️',
+            avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&auto=format&fit=crop&q=80',
+            gender: '女',
+            stage: 'churn',
+            stageText: '流失预警',
+            stageColor: 'bg-rose-100 text-rose-800',
+            tags: ['抗初老', '45天无互动', '退出了02群'],
+            channel: '线下门店专柜扫码',
+            value: '￥1,280',
+            activityCount: 2,
+            lastActive: '45天前',
+            staff: '林晨 (运营总监)',
+            health: '高危预警 (RFM 211)',
+            timeline: [
+              { title: '退出【美诺美妆】VIP交流二群', desc: '系统监测到退群动作，已自动分配关怀跟进任务', time: '20天前 09:12 · 社群退出' },
+              { title: '专柜扫码注册会员', desc: '在线下门店扫码领样并添加企微导购', time: '45天前 14:20 · 智慧门店' }
+            ]
+          },
+          {
+            id: 'C1003',
+            name: '陈铭',
+            wechatNick: 'Calvin.C',
+            avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80',
+            gender: '男',
+            stage: 'mature',
+            stageText: '成熟客群',
+            stageColor: 'bg-blue-100 text-blue-800',
+            tags: ['男士理容', '高客单新客', '自营小程序'],
+            channel: '抖音信息流投流',
+            value: '￥1,480',
+            activityCount: 3,
+            lastActive: '昨天',
+            staff: '王芳 (美妆顾问)',
+            health: '良好 (RFM 423)',
+            timeline: [
+              { title: '复购洁面乳与保湿霜组合', desc: '享受老客满200减30专属折扣', time: '昨天 21:00 · 手机H5支付' },
+              { title: '抖音广告点击加微', desc: '通过信息流原生页唤起企业微信添加成功', time: '15天前 19:40 · 抖音投流' }
+            ]
+          }
+        ]
+      }
+    };
+
+    let currentSelectedCustomers = new Set();
+    let currentViewingCustomer = null;
+
+    // Switch between Retail E-commerce (C端) & Service/B2B/Consultation mode (B端)
+    function setBusinessMode(mode) {
+      currentBusinessMode = mode;
+      const data = datasetByMode[mode];
+
+      // Update toggle buttons styling
+      const btnService = document.getElementById('mode-btn-service');
+      const btnRetail = document.getElementById('mode-btn-retail');
+      if (mode === 'service') {
+        btnService.className = 'flex-1 py-1.5 px-2 rounded-lg text-emerald-700 bg-white shadow-xs font-semibold flex items-center justify-center gap-1 transition';
+        btnRetail.className = 'flex-1 py-1.5 px-2 rounded-lg text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1 transition';
+      } else {
+        btnRetail.className = 'flex-1 py-1.5 px-2 rounded-lg text-emerald-700 bg-white shadow-xs font-semibold flex items-center justify-center gap-1 transition';
+        btnService.className = 'flex-1 py-1.5 px-2 rounded-lg text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1 transition';
+      }
+
+      // Update Tenant header info
+      document.getElementById('org-badge').innerText = data.orgBadge;
+      document.getElementById('org-name').innerText = data.orgName;
+      document.getElementById('org-sub').innerText = data.orgSub;
+
+      // Update KPI metrics
+      document.getElementById('kpi-revenue-title').innerText = data.kpiRevenueTitle;
+      document.getElementById('kpi-revenue-value').innerText = data.kpiRevenueValue;
+      document.getElementById('kpi-revenue-icon').className = data.kpiRevenueIcon;
+      document.getElementById('kpi-revenue-sub1').innerText = data.kpiSub1;
+      document.getElementById('kpi-revenue-sub2').innerText = data.kpiSub2;
+
+      // Update Table header & Drawer metric titles
+      document.getElementById('th-customer-value').innerText = data.valueColTitle;
+      document.getElementById('drawer-metric1-label').innerText = data.metric1Label;
+      document.getElementById('drawer-metric2-label').innerText = data.metric2Label;
+      document.getElementById('trend-desc').innerText = data.trendDesc;
+      document.getElementById('funnel-title').innerText = data.funnelTitle;
+      document.getElementById('funnel-summary').innerText = data.funnelSummary;
+
+      // Update funnel steps
+      const funnelContainer = document.getElementById('funnel-steps-container');
+      funnelContainer.innerHTML = '';
+      data.funnelSteps.forEach(step => {
+        const div = document.createElement('div');
+        div.innerHTML = `
+          <div class="flex justify-between mb-1">
+            <span class="font-medium text-slate-700">${step.name}</span>
+            <span class="font-semibold text-slate-900">${step.count}</span>
+          </div>
+          <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+            <div class="${step.color} h-full rounded-full" style="width: ${step.pct}"></div>
+          </div>
+        `;
+        funnelContainer.appendChild(div);
+      });
+
+      // Render Dashboard Tasks (B端 vs C端)
+      renderDashboardTasks(data);
+
+      // Render SOP Flow & Templates (B端 vs C端)
+      renderSopView(data);
+
+      // Clear selection and re-render customer table
+      currentSelectedCustomers.clear();
+      document.getElementById('selected-customer-count').innerText = 0;
+      renderCustomerTable();
+
+      showToast(`已切换至【${data.modeLabel}】SOP策略与画像体系`, 'info');
+    }
+
+    // Render Dashboard SOP Tasks dynamically
+    function renderDashboardTasks(data) {
+      document.getElementById('dashboard-task-title').innerText = data.dashboardTaskTitle;
+      document.getElementById('dashboard-task-summary').innerText = data.dashboardTaskSummary;
+      const container = document.getElementById('dashboard-tasks-container');
+      container.innerHTML = '';
+
+      data.dashboardTasks.forEach(task => {
+        const div = document.createElement('div');
+        div.className = `p-3 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between ${task.done ? 'opacity-60' : ''}`;
+        div.innerHTML = `
+          <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-lg ${task.iconBg} flex items-center justify-center text-xs shrink-0">
+              <i class="${task.icon}"></i>
+            </div>
+            <div class="truncate">
+              <div class="text-xs font-semibold text-slate-900 truncate ${task.done ? 'line-through' : ''}">${task.title}</div>
+              <div class="text-[11px] text-slate-500 truncate">${task.sub}</div>
+            </div>
+          </div>
+          ${task.done 
+            ? `<span class="text-xs text-slate-400 font-medium px-2 py-1 bg-slate-100 rounded shrink-0">已完成</span>` 
+            : `<button onclick="triggerStaffAction(this, '${task.title}')" class="px-3 py-1 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 active:scale-95 transition shrink-0">${task.actionText}</button>`
+          }
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    // Render SOP View (Visualizer & Templates)
+    function renderSopView(data) {
+      document.getElementById('sop-mode-badge').innerText = data.sopModeBadge;
+      document.getElementById('sop-mode-desc').innerText = data.sopModeDesc;
+
+      // Render Visualizer
+      const flow = data.sopFlow;
+      const flowContainer = document.getElementById('sop-flow-container');
+      
+      const stepsHtml = flow.steps.map((step, idx) => `
+        <div class="w-64 p-3.5 bg-slate-50 border border-slate-200 rounded-xl relative shrink-0">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-[10px] bg-slate-200 text-slate-700 font-bold px-1.5 py-0.5 rounded">${step.phase}</span>
+            <i class="${step.icon} text-xs"></i>
+          </div>
+          <div class="text-xs font-bold text-slate-800">${step.title}</div>
+          <div class="text-[11px] text-slate-500 mt-1 leading-relaxed">${step.desc}</div>
+          <div class="mt-3 text-[10px] ${step.badgeColor} p-1.5 rounded font-medium">${step.badge}</div>
+        </div>
+        ${idx < flow.steps.length - 1 ? `<div class="text-slate-300 font-bold shrink-0"><i class="fa-solid fa-arrow-right"></i></div>` : ''}
+      `).join('');
+
+      flowContainer.innerHTML = `
+        <div class="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-slate-100 gap-2">
+          <div class="flex items-center gap-3">
+            <span class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-sm shrink-0">
+              <i class="fa-solid fa-route"></i>
+            </span>
+            <div>
+              <h5 class="font-bold text-slate-900 text-sm">${flow.title}</h5>
+              <span class="text-[11px] text-emerald-600 font-medium">${flow.trigger}</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 text-xs">
+            <span class="bg-emerald-50 text-emerald-700 font-medium px-2 py-0.5 rounded-full">已激活运行中</span>
+            <span class="text-slate-400">${flow.stats}</span>
+          </div>
+        </div>
+
+        <div class="py-6 overflow-x-auto">
+          <div class="flex items-center gap-4 min-w-[700px]">
+            ${stepsHtml}
+          </div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between pt-4 border-t border-slate-100 text-xs gap-2">
+          <span class="text-slate-400">支持基于企微标签变化、微盘文件阅读时长、诊断会打卡分支自动流转</span>
+          <div class="flex gap-2">
+            <button onclick="showToast('正在打开SOP可视化画布编辑器...', 'info')" class="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md font-medium">编辑流规则</button>
+            <button onclick="showToast('已成功复制当前SOP模板', 'success')" class="px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-md font-medium">克隆此方案</button>
+          </div>
+        </div>
+      `;
+
+      // Render Templates
+      const templatesContainer = document.getElementById('sop-templates-container');
+      templatesContainer.innerHTML = '';
+      data.sopTemplates.forEach(t => {
+        const div = document.createElement('div');
+        div.className = 'bg-white p-4 rounded-xl border border-slate-200 hover:border-emerald-200 transition shadow-xs';
+        div.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-slate-800">${t.title}</span>
+            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          </div>
+          <p class="text-[11px] text-slate-500 mt-1 leading-relaxed">${t.desc}</p>
+          <div class="mt-4 flex items-center justify-between text-xs">
+            <span class="text-emerald-600 font-semibold">${t.stat}</span>
+            <button onclick="showToast('查看此模板编排细节', 'info')" class="text-slate-400 hover:text-slate-600">查看详情 &rarr;</button>
+          </div>
+        `;
+        templatesContainer.appendChild(div);
+      });
+    }
+
+    function toggleMobileSidebar(show) {
+      const sidebar = document.getElementById('sidebar-menu');
+      const backdrop = document.getElementById('mobile-sidebar-backdrop');
+      if (show) {
+        sidebar.classList.remove('sidebar-closed');
+        sidebar.classList.add('sidebar-open');
+        backdrop.classList.remove('pointer-events-none');
+        backdrop.classList.add('opacity-100');
+      } else {
+        sidebar.classList.remove('sidebar-open');
+        sidebar.classList.add('sidebar-closed');
+        backdrop.classList.remove('opacity-100');
+        backdrop.classList.add('pointer-events-none');
+      }
+    }
+
+    function switchTab(tabId) {
+      const tabs = ['dashboard', 'customers', 'groups', 'sop', 'broadcast'];
+      const titles = {
+        dashboard: '运营监控仪表盘',
+        customers: '客户资产 360° 视图',
+        groups: '企微社群矩阵运营',
+        sop: 'SOP 自动化策略流',
+        broadcast: '精准触达与群发'
+      };
+
+      tabs.forEach(t => {
+        const viewEl = document.getElementById(`view-${t}`);
+        const navEl = document.getElementById(`nav-${t}`);
+        const mobileNavEl = document.getElementById(`mobile-nav-${t}`);
+        
+        if (viewEl) viewEl.classList.add('hidden');
+        if (navEl) {
+          navEl.classList.remove('bg-emerald-50', 'text-emerald-700');
+          navEl.classList.add('text-slate-600');
+        }
+        if (mobileNavEl) {
+          mobileNavEl.classList.remove('text-emerald-600');
+          mobileNavEl.classList.add('text-slate-500');
+        }
+      });
+
+      const activeView = document.getElementById(`view-${tabId}`);
+      const activeNav = document.getElementById(`nav-${tabId}`);
+      const activeMobileNav = document.getElementById(`mobile-nav-${tabId}`);
+      
+      if (activeView) activeView.classList.remove('hidden');
+      if (activeNav) {
+        activeNav.classList.remove('text-slate-600');
+        activeNav.classList.add('bg-emerald-50', 'text-emerald-700');
+      }
+      if (activeMobileNav) {
+        activeMobileNav.classList.remove('text-slate-500');
+        activeMobileNav.classList.add('text-emerald-600');
+      }
+
+      document.getElementById('page-title').innerText = titles[tabId] || 'SCRM运营系统';
+      toggleMobileSidebar(false);
+    }
+
+    function getCurrentCustomerList() {
+      return datasetByMode[currentBusinessMode].customers;
+    }
+
+    function renderCustomerTable(filter = 'all') {
+      const tbody = document.getElementById('customer-table-body');
+      tbody.innerHTML = '';
+
+      const list = getCurrentCustomerList();
+      const filtered = filter === 'all' 
+        ? list 
+        : list.filter(c => c.stage === filter);
+
+      filtered.forEach(c => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-50/80 transition cursor-pointer';
+        tr.onclick = (e) => {
+          if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') {
+            openCustomerDrawer(c);
+          }
+        };
+
+        const tagBadges = c.tags.slice(0, 3).map(tag => 
+          `<span class="inline-block px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-600 mr-1">${tag}</span>`
+        ).join('');
+
+        tr.innerHTML = `
+          <td class="p-3.5 pl-4">
+            <input type="checkbox" onchange="toggleSelectCustomer('${c.id}', this)" ${currentSelectedCustomers.has(c.id) ? 'checked' : ''} class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">
+          </td>
+          <td class="p-3.5">
+            <div class="flex items-center gap-2.5">
+              <img src="${c.avatar}" class="w-8 h-8 rounded-full object-cover">
+              <div>
+                <div class="font-semibold text-slate-900 flex items-center gap-1">
+                  ${c.name} 
+                  <span class="text-[10px] text-slate-400 font-normal">(${c.wechatNick})</span>
+                </div>
+                <div class="text-[10px] text-slate-400">负责顾问: ${c.staff}</div>
+              </div>
+            </div>
+          </td>
+          <td class="p-3.5">
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${c.stageColor}">${c.stageText}</span>
+          </td>
+          <td class="p-3.5">
+            ${tagBadges}
+          </td>
+          <td class="p-3.5 text-slate-600">${c.channel}</td>
+          <td class="p-3.5 font-bold text-slate-800">${c.value}</td>
+          <td class="p-3.5 text-slate-500">${c.lastActive}</td>
+          <td class="p-3.5 pr-4 text-center">
+            <button onclick="event.stopPropagation(); openCustomerDrawerById('${c.id}')" class="px-2.5 py-1 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md font-medium text-[11px] transition">画像</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function filterCustomers(type) {
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.remove('bg-emerald-50', 'text-emerald-700', 'font-semibold');
+        btn.classList.add('text-slate-600');
+      });
+      event.target.classList.add('bg-emerald-50', 'text-emerald-700', 'font-semibold');
+      event.target.classList.remove('text-slate-600');
+      renderCustomerTable(type);
+    }
+
+    function toggleSelectCustomer(id, checkbox) {
+      if (checkbox.checked) {
+        currentSelectedCustomers.add(id);
+      } else {
+        currentSelectedCustomers.delete(id);
+      }
+      document.getElementById('selected-customer-count').innerText = currentSelectedCustomers.size;
+    }
+
+    function toggleSelectAll(masterBox) {
+      const list = getCurrentCustomerList();
+      list.forEach(c => {
+        if (masterBox.checked) {
+          currentSelectedCustomers.add(c.id);
+        } else {
+          currentSelectedCustomers.delete(c.id);
+        }
+      });
+      document.getElementById('selected-customer-count').innerText = currentSelectedCustomers.size;
+      renderCustomerTable();
+    }
+
+    function openCustomerDrawer(customer) {
+      currentViewingCustomer = customer;
+      document.getElementById('drawer-name').innerText = customer.name;
+      document.getElementById('drawer-gender').innerText = `(${customer.gender})`;
+      document.getElementById('drawer-wechat-nick').innerText = customer.wechatNick;
+      document.getElementById('drawer-staff').innerText = customer.staff;
+      document.getElementById('drawer-avatar').src = customer.avatar;
+      document.getElementById('drawer-spend').innerText = customer.value;
+      document.getElementById('drawer-orders').innerText = `${customer.activityCount} 次`;
+      document.getElementById('drawer-health').innerText = customer.health;
+
+      // Update universal drawer action labels by mode
+      if (currentBusinessMode === 'service') {
+        document.getElementById('btn-label-doc').innerText = '发送资料/方案';
+        document.getElementById('btn-label-meeting').innerText = '邀约会面/诊断';
+        document.getElementById('btn-label-benefit').innerText = '试听/体验权限';
+      } else {
+        document.getElementById('btn-label-doc').innerText = '发送商品画册';
+        document.getElementById('btn-label-meeting').innerText = '预约到店体验';
+        document.getElementById('btn-label-benefit').innerText = '发放代金优惠券';
+      }
+
+      // Render tags
+      const tagsContainer = document.getElementById('drawer-tags-container');
+      tagsContainer.innerHTML = '';
+      customer.tags.forEach(t => {
+        const span = document.createElement('span');
+        span.className = 'px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200/60 rounded-md text-xs font-medium flex items-center gap-1';
+        span.innerHTML = `${t} <i onclick="removeTag(this)" class="fa-solid fa-xmark text-[10px] cursor-pointer hover:text-rose-600"></i>`;
+        tagsContainer.appendChild(span);
+      });
+
+      // Render full lifecycle timeline
+      const timelineContainer = document.getElementById('drawer-timeline');
+      timelineContainer.innerHTML = '';
+      (customer.timeline || []).forEach((item, index) => {
+        const dotColor = index === 0 ? 'bg-emerald-500' : index === 1 ? 'bg-blue-500' : 'bg-slate-400';
+        const el = document.createElement('div');
+        el.className = 'relative';
+        el.innerHTML = `
+          <div class="absolute -left-6 top-1 w-2.5 h-2.5 rounded-full ${dotColor} ring-4 ring-white"></div>
+          <div class="text-xs font-semibold text-slate-800">${item.title}</div>
+          <div class="text-[11px] text-slate-500 mt-0.5">${item.desc}</div>
+          <div class="text-[10px] text-slate-400 mt-1">${item.time}</div>
+        `;
+        timelineContainer.appendChild(el);
+      });
+
+      // Show drawer
+      const backdrop = document.getElementById('drawer-backdrop');
+      const drawer = document.getElementById('customer-drawer');
+      backdrop.classList.remove('pointer-events-none');
+      backdrop.classList.add('opacity-100');
+      drawer.classList.remove('drawer-closed');
+      drawer.classList.add('drawer-open');
+    }
+
+    function openCustomerDrawerById(id) {
+      const c = getCurrentCustomerList().find(item => item.id === id);
+      if (c) openCustomerDrawer(c);
+    }
+
+    function openCustomerDrawerByName(name) {
+      const c = getCurrentCustomerList().find(item => item.name === name);
+      if (c) openCustomerDrawer(c);
+    }
+
+    function closeCustomerDrawer() {
+      const backdrop = document.getElementById('drawer-backdrop');
+      const drawer = document.getElementById('customer-drawer');
+      backdrop.classList.remove('opacity-100');
+      backdrop.classList.add('pointer-events-none');
+      drawer.classList.remove('drawer-open');
+      drawer.classList.add('drawer-closed');
+    }
+
+    // Universal Action Buttons in Customer 360
+    function triggerUniversalAction(actionType) {
+      const customerName = currentViewingCustomer ? currentViewingCustomer.name : '该客户';
+      if (actionType === 'send_doc') {
+        showToast(currentBusinessMode === 'service' 
+          ? `已通过企微微盘向 ${customerName} 下发《行业数字化解决方案与案例集》` 
+          : `已向 ${customerName} 发送最新秋季新品画册与规格表`, 'success');
+      } else if (actionType === 'book_meeting') {
+        showToast(currentBusinessMode === 'service' 
+          ? `已向 ${customerName} 发送企微会议预约链接与议程确认函` 
+          : `已向 ${customerName} 发送线下智慧门店美肤护理预约卡片`, 'success');
+      } else if (actionType === 'benefit') {
+        showToast(currentBusinessMode === 'service' 
+          ? `已为 ${customerName} 开通为期 14 天的企业级 VIP 试用体验授权` 
+          : `已成功为 ${customerName} 下发满 300 减 50 专属代金券`, 'success');
+      } else if (actionType === 'quick_note') {
+        showToast(`跟进纪要已自动同步写入该企微会话存档`, 'info');
+      }
+    }
+
+    // Custom Tag Modal
+    let isBatchTagMode = false;
+
+    function addCustomTag() {
+      isBatchTagMode = false;
+      document.getElementById('tag-input-value').value = '';
+      document.getElementById('tag-modal').classList.remove('hidden');
+      setTimeout(() => document.getElementById('tag-input-value').focus(), 100);
+    }
+
+    function setTagPreset(tagName) {
+      document.getElementById('tag-input-value').value = tagName;
+    }
+
+    function closeTagModal() {
+      document.getElementById('tag-modal').classList.add('hidden');
+    }
+
+    function confirmCustomTag() {
+      const tag = document.getElementById('tag-input-value').value.trim();
+      if (!tag) {
+        showToast('请输入有效的标签内容', 'warning');
+        return;
+      }
+
+      if (isBatchTagMode) {
+        closeTagModal();
+        showToast(`成功为选中的 ${currentSelectedCustomers.size} 位客户批量贴上 [${tag}] 标签`, 'success');
+        return;
+      }
+
+      if (currentViewingCustomer) {
+        currentViewingCustomer.tags.push(tag);
+        openCustomerDrawer(currentViewingCustomer);
+        renderCustomerTable();
+        closeTagModal();
+        showToast(`已为 ${currentViewingCustomer.name} 打上标签: [${tag}]`, 'success');
+      }
+    }
+
+    function removeTag(element) {
+      element.parentElement.remove();
+      showToast('标签已移除', 'info');
+    }
+
+    function batchTagAction() {
+      if (currentSelectedCustomers.size === 0) {
+        showToast('请先勾选需要批量打标签的客户', 'warning');
+        return;
+      }
+      isBatchTagMode = true;
+      document.getElementById('tag-input-value').value = '';
+      document.getElementById('tag-modal').classList.remove('hidden');
+    }
+
+    function openBroadcastModal() {
+      document.getElementById('broadcast-modal').classList.remove('hidden');
+    }
+
+    function closeBroadcastModal() {
+      document.getElementById('broadcast-modal').classList.add('hidden');
+    }
+
+    document.getElementById('task-msg-input').addEventListener('input', function(e) {
+      document.getElementById('preview-text').innerText = e.target.value;
+    });
+
+    function submitBroadcastTask() {
+      const title = document.getElementById('task-title-input').value;
+      closeBroadcastModal();
+      showToast(`任务已成功下发至企微顾问助手: "${title}"`, 'success');
+    }
+
+    function triggerStaffAction(btn, taskName) {
+      btn.innerText = '已指派';
+      btn.className = 'px-3 py-1 bg-slate-100 text-slate-400 rounded-lg text-xs font-medium cursor-not-allowed';
+      btn.disabled = true;
+      showToast(`已自动下发【${taskName}】执行通知到顾问企业微信`, 'success');
+    }
+
+    function triggerSyncWechat() {
+      const icon = document.getElementById('sync-icon');
+      icon.classList.add('fa-spin');
+      setTimeout(() => {
+        icon.classList.remove('fa-spin');
+        showToast('企微组织架构与客户变动增量同步完成！', 'success');
+      }, 900);
+    }
+
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toast-msg');
+      const toastIcon = document.getElementById('toast-icon');
+
+      toastMsg.innerText = message;
+
+      if (type === 'success') {
+        toastIcon.className = 'fa-solid fa-circle-check text-emerald-400';
+      } else if (type === 'warning') {
+        toastIcon.className = 'fa-solid fa-triangle-exclamation text-amber-400';
+      } else {
+        toastIcon.className = 'fa-solid fa-circle-info text-blue-400';
+      }
+
+      toast.classList.remove('translate-y-20', 'opacity-0');
+      toast.classList.add('translate-y-0', 'opacity-100');
+
+      setTimeout(() => {
+        toast.classList.add('translate-y-20', 'opacity-0');
+        toast.classList.remove('translate-y-0', 'opacity-100');
+      }, 2600);
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      // Initialize default mode to 'service' (Leads & High-value Consultation)
+      setBusinessMode('service');
+
+      // Chart.js: 7-Day Net Growth & Churn Trend
+      const ctx = document.getElementById('trendChart').getContext('2d');
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
+          datasets: [
+            {
+              label: '每日净新增好友/线索',
+              data: [142, 168, 195, 230, 210, 285, 310],
+              borderColor: '#059669',
+              backgroundColor: 'rgba(5, 150, 105, 0.08)',
+              fill: true,
+              tension: 0.35,
+              borderWidth: 2.5,
+              pointBackgroundColor: '#059669'
+            },
+            {
+              label: '客户流失/停滞数',
+              data: [18, 22, 14, 28, 19, 31, 24],
+              borderColor: '#f43f5e',
+              borderDash: [5, 5],
+              backgroundColor: 'transparent',
+              tension: 0.3,
+              borderWidth: 1.8,
+              pointBackgroundColor: '#f43f5e'
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: {
+                boxWidth: 12,
+                font: { size: 11 }
+              }
+            },
+            tooltip: {
+              mode: 'index',
+              intersect: false
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              grid: { color: '#f1f5f9' },
+              ticks: { font: { size: 10 } }
+            },
+            x: {
+              grid: { display: false },
+              ticks: { font: { size: 10 } }
+            }
+          }
+        }
+      });
+    });
+  </script>
+</body>
+</html>
