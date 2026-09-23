@@ -31,11 +31,59 @@ import type {
   MsgAuditStatus
 } from './types'
 
+// === JWT 令牌管理 ===
+const TOKEN_KEY = 'nebula_scrm_token'
+const USER_KEY = 'nebula_scrm_user'
+
+export function getToken(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY) } catch { return null }
+}
+export function setToken(token: string, user?: AuthUser) {
+  try {
+    localStorage.setItem(TOKEN_KEY, token)
+    if (user) localStorage.setItem(USER_KEY, JSON.stringify(user))
+  } catch { /* SSR 环境或禁用 storage */ }
+}
+export function clearAuth() {
+  try {
+    localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(USER_KEY)
+  } catch { /* ignore */ }
+}
+export function getStoredUser(): AuthUser | null {
+  try {
+    const s = localStorage.getItem(USER_KEY)
+    return s ? JSON.parse(s) : null
+  } catch { return null }
+}
+
+// 401 时派发事件，App 层监听后跳登录
+const AUTH_EVENT = 'nebula:auth-expired'
+function emitAuthExpired() {
+  try { window.dispatchEvent(new CustomEvent(AUTH_EVENT)) } catch { /* ignore */ }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options
-  })
+  const token = getToken()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-Request-Id': crypto.randomUUID()
+  }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  let res: Response
+  try {
+    res = await fetch(`/api${path}`, { ...options, headers: { ...headers, ...(options?.headers as Record<string, string> | undefined) } })
+  } catch (e) {
+    throw new Error('网络异常，请检查连接后重试')
+  }
+
+  if (res.status === 401) {
+    clearAuth()
+    emitAuthExpired()
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || '登录已过期，请重新登录')
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error || `请求失败 (${res.status})`)
@@ -71,11 +119,11 @@ export interface CustomerPayload {
 
 export const api = {
   register: (payload: { name: string; account: string; password: string; businessMode: BizMode }) =>
-    request<{ user: AuthUser }>('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
+    request<{ user: AuthUser; token: string }>('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
   login: (payload: { account: string; password: string }) =>
-    request<{ user: AuthUser }>('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
+    request<{ user: AuthUser; token: string }>('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
   wxlogin: (payload: { code: string; name?: string }) =>
-    request<{ user: AuthUser; wecomDetail?: unknown; simulated?: boolean }>('/auth/wxlogin', {
+    request<{ user: AuthUser; token: string; wecomDetail?: unknown; simulated?: boolean }>('/auth/wxlogin', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),

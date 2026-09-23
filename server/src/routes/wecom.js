@@ -1,6 +1,7 @@
 import express from 'express'
 import { db, now } from '../db.js'
 import { WXBizMsgCrypt, getAccessToken, callWecomApi, upsertGroupFromWecom, syncGroupMemberJoin, syncGroupMemberLeave, dismissGroup, getStaffByCode } from '../wecom.js'
+import { ipWhitelist } from '../middleware/ipWhitelist.js'
 
 const router = express.Router()
 
@@ -198,7 +199,7 @@ router.post('/simulate', (req, res) => {
   res.status(400).json({ error: 'changeType 只能是 add、del_follow 或 del' })
 })
 
-router.get('/callback', (req, res) => {
+router.get('/callback', ipWhitelist('wecom_webhook_ips'), (req, res) => {
   const cfg = getConfig()
   if (!cfg.callback_token || !cfg.encoding_aes_key) {
     return res.status(403).json({ error: '请先在企微对接中心配置 Token 与 EncodingAESKey' })
@@ -213,7 +214,7 @@ router.get('/callback', (req, res) => {
   }
 })
 
-router.post('/callback', express.text({ type: () => true }), async (req, res) => {
+router.post('/callback', ipWhitelist('wecom_webhook_ips'), express.text({ type: () => true }), async (req, res) => {
   try {
     const cfg = getConfig()
     if (!cfg.callback_token || !cfg.encoding_aes_key) throw new Error('未配置 Token 与 EncodingAESKey')

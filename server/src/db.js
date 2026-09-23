@@ -9,6 +9,8 @@ if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true })
 
 const db = new Database(path.join(dataDir, 'scrm.db'))
 db.pragma('foreign_keys = ON')
+db.pragma('journal_mode = WAL')        // 多进程 / 写密集场景下读写并行
+db.pragma('busy_timeout = 5000')        // 锁冲突时等待 5s，避免 SQLITE_BUSY
 
 function initSchema() {
   db.exec(`
@@ -281,6 +283,9 @@ function initSchema() {
   try { db.prepare('ALTER TABLE wecom_config ADD COLUMN msg_audit_last_msgid TEXT').run() } catch {}
   try { db.prepare('ALTER TABLE wecom_config ADD COLUMN msg_audit_last_polled_at TEXT').run() } catch {}
   try { db.prepare('ALTER TABLE wecom_config ADD COLUMN msg_audit_status TEXT').run() } catch {}
+  // === Webhook IP 白名单（P0-3）===
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN wecom_webhook_ips TEXT').run() } catch {}
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN video_shop_webhook_ips TEXT').run() } catch {}
 
   // msg_audit_state：游标存储（不同 agent 隔离）
   try { db.prepare(`CREATE TABLE IF NOT EXISTS msg_audit_state (

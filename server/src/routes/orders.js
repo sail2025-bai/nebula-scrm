@@ -1,5 +1,6 @@
 import express from 'express'
 import { db, now } from '../db.js'
+import { ipWhitelist } from '../middleware/ipWhitelist.js'
 import {
   verifyWxSignature,
   decryptWxEncrypt
@@ -292,7 +293,7 @@ function handleShopOrder(body) {
   return { ok: true, order_id: r.id, matched: !!customer, customer_id: customer?.id || null, updated: r.updated }
 }
 
-router.post('/webhook/channels-shop', (req, res) => {
+router.post('/webhook/channels-shop', ipWhitelist('video_shop_webhook_ips'), (req, res) => {
   // 从 wecom_config 读视频号小店加密配置
   const cfg = db.prepare('SELECT * FROM wecom_config WHERE id = 1').get() || {}
   const token = cfg.video_shop_token
@@ -344,7 +345,7 @@ router.post('/webhook/channels-shop', (req, res) => {
 })
 
 // GET 用于微信后台的"服务器配置验证"URL
-router.get('/webhook/channels-shop', (req, res) => {
+router.get('/webhook/channels-shop', ipWhitelist('video_shop_webhook_ips'), (req, res) => {
   const cfg = db.prepare('SELECT * FROM wecom_config WHERE id = 1').get() || {}
   const token = cfg.video_shop_token
   const { msg_signature, timestamp, nonce, echostr } = req.query

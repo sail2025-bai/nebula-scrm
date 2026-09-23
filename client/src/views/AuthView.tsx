@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api } from '../api'
+import { api, setToken } from '../api'
 import { MODE_META, type AuthUser, type BizMode } from '../types'
 
 const MODE_OPTIONS: { value: BizMode; icon: string; iconColor: string; desc: string }[] = [
@@ -71,7 +71,8 @@ export default function AuthView({ onAuth }: { onAuth: (user: AuthUser) => void 
     setLoading(true)
     setApiError('')
     try {
-      const { user } = await api.login({ account: loginAccount.trim(), password: loginPassword })
+      const { user, token } = await api.login({ account: loginAccount.trim(), password: loginPassword })
+      setToken(token, user)
       onAuth(user)
     } catch (err) {
       setApiError(err instanceof Error ? err.message : '登录失败，请稍后重试')
@@ -94,12 +95,13 @@ export default function AuthView({ onAuth }: { onAuth: (user: AuthUser) => void 
     setLoading(true)
     setApiError('')
     try {
-      const { user } = await api.register({
+      const { user, token } = await api.register({
         name: name.trim(),
         account: account.trim(),
         password,
         businessMode
       })
+      setToken(token, user)
       onAuth(user)
     } catch (err) {
       setApiError(err instanceof Error ? err.message : '注册失败，请稍后重试')
@@ -113,8 +115,9 @@ export default function AuthView({ onAuth }: { onAuth: (user: AuthUser) => void 
     setApiError('')
     try {
       const payload = forceSimulate ? { code: 'SIM_' + Date.now().toString(36) } : { code }
-      const res = await api.wxlogin(payload)
-      onAuth(res.user)
+      const { user, token } = await api.wxlogin(payload)
+      setToken(token, user)
+      onAuth(user)
     } catch (err) {
       setApiError(err instanceof Error ? err.message : '企微侧边栏登录失败')
     } finally {

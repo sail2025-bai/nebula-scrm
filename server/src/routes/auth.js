@@ -1,6 +1,7 @@
 import express from 'express'
 import crypto from 'node:crypto'
 import { db, now } from '../db.js'
+import { signToken } from '../middleware/auth.js'
 
 const router = express.Router()
 
@@ -32,8 +33,10 @@ router.post('/register', (req, res) => {
   if (db.prepare('SELECT id FROM users WHERE account = ?').get(account)) return res.status(400).json({ error: '该账号已被注册' })
   try {
     const r = db.prepare('INSERT INTO users (name, account, password_hash, business_mode, created_at) VALUES (?, ?, ?, ?, ?)').run(name, account, hashPassword(password), businessMode, now())
-    const user = db.prepare('SELECT id, name, account, business_mode AS businessMode FROM users WHERE id = ?').get(Number(r.lastInsertRowid))
-    res.status(201).json({ user })
+    const row = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(r.lastInsertRowid))
+    const user = { id: row.id, name: row.name, account: row.account, businessMode: row.business_mode }
+    const token = signToken({ id: row.id, account: row.account, name: row.name, businessMode: row.business_mode, role: 'admin' })
+    res.status(201).json({ user, token })
   } catch (e) {
     res.status(400).json({ error: '注册失败，该账号可能已被注册' })
   }
@@ -45,7 +48,13 @@ router.post('/login', (req, res) => {
   const password = b.password !== undefined && b.password !== null ? String(b.password) : ''
   const row = db.prepare('SELECT * FROM users WHERE account = ?').get(account)
   if (!row || !verifyPassword(password, row.password_hash)) return res.status(401).json({ error: '账号或密码错误' })
-  res.json({ user: { id: row.id, name: row.name, account: row.account, businessMode: row.business_mode } })
+  const user = { id: row.id, name: row.name, account: row.account, businessMode: row.business_mode }
+  const token = signToken({
+    id: row.id, account: row.account, name: row.name,
+    businessMode: row.business_mode, role: row.role || 'user',
+    wecomUserid: row.wecom_userid || null
+  })
+  res.json({ user, token })
 })
 
 import { getStaffByCode, wecomConfig, log } from '../wecom.js'
@@ -102,7 +111,12 @@ router.post('/wxlogin', async (req, res) => {
     res.json({
       user: { id: user.id, name: user.name, account: user.account, businessMode: user.business_mode, wecomUserid: userid },
       wecomDetail: detail,
-      simulated: isSimulated
+      simulated: isSimulated,
+      token: signToken({
+        id: user.id, account: user.account, name: user.name,
+        businessMode: user.business_mode, role: 'user',
+        wecomUserid: userid
+      })
     })
   } catch (e) {
     res.status(400).json({ error: '企微侧边栏登录失败：' + e.message })

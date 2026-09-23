@@ -49,23 +49,35 @@ export function startScheduler() {
     pollMsgAudit().catch((e) => log('scheduler', 'error', `msgaudit poll: ${e.message}`))
   }, 5 * 60 * 1000))
 
-  // G：每日 0 点归零 today_messages（配合每日零点后重新聚合使用）
-  //   用 1 分钟轮询 + 时间判断，避免 cron 解析依赖
-  let lastMidnight = ''
-  timers.push(setInterval(() => {
+  // G：每日 0 点归零 today_messages
+  //   用递归 setTimeout 计算到下次 0 点的毫秒数，避免每分钟轮询 + GC 丢触发
+  function scheduleMidnightZero() {
     const now = new Date()
-    const ymd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    if (now.getHours() === 0 && now.getMinutes() === 0 && lastMidnight !== ymd) {
-      lastMidnight = ymd
-      zeroTodayMessages().catch((e) => log('scheduler', 'error', `msgaudit zero: ${e.message}`))
-    }
-  }, 60 * 1000))
+    const next = new Date(now)
+    next.setHours(24, 0, 0, 0) // 明天 0 点
+    const ms = next.getTime() - now.getTime()
+    const handle = setTimeout(async () => {
+      try {
+        await zeroTodayMessages()
+        log('scheduler', 'info', `每日归零完成，下一次将在 ${next.toISOString().slice(0, 10)} 00:00`)
+      } catch (e) {
+        log('scheduler', 'error', `msgaudit zero: ${e.message}`)
+      } finally {
+        scheduleMidnightZero() // 递归：排下一次
+      }
+    }, ms + 1000) // +1s 错开整点
+    timers.push(handle)
+  }
+  scheduleMidnightZero()
 
-  log('scheduler', 'info', `调度器已注册 ${timers.length} 个定时器 (通讯录/群发/秒杀券过期/SOP/标签清理/会话存档轮询/每日归零)`)
+  log('scheduler', 'info', `调度器已启动：会话存档轮询(5min) + 每日归零(递归)`)
 }
 
 export function stopScheduler() {
-  for (const t of timers) { clearInterval(t) }
+  for (const t of timers) {
+    if (typeof t === 'object' && t.hasRef && typeof t.ref === 'function') clearTimeout(t)
+    else clearInterval(t)
+  }
   timers = []
 }
 
@@ -225,3 +237,38 @@ async function runSOP(sop, customerIds, triggeredBy) {
   db.prepare('UPDATE sops SET run_count = run_count + 1 WHERE id = ?').run(sop.id)
   return { run_id: r.lastInsertRowid, success_count: success, couponIssued, tagApplied }
 }
+
+  // H：每日 3 点做 SQLite 备份（VACUUM INTO），保留最近 7 天
+  function scheduleDailyBackup() {
+    const now = new Date()
+    const next = new Date(now)
+    next.setHours(3, 0, 0, 0)
+    if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1)
+    const ms = next.getTime() - now.getTime()
+    const handle = setTimeout(() => {
+      try {
+        const fs = require('node:fs')
+        const path = require('node:path')
+        const backupDir = path.join(__dirname, '..', 'data', 'backups')
+        if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true })
+        const dateStr = new Date().toISOString().slice(0, 10)
+        const backupFile = path.join(backupDir, `scrm-${dateStr}.db`)
+        // WAL 模式下用 VACUUM INTO，保证备份一致性
+        db.prepare('VACUUM INTO ?').run(backupFile)
+        log('backup', 'info', `每日备份完成: ${backupFile}`)
+        // 保留最近 7 天，清老备份
+        const files = fs.readdirSync(backupDir)
+          .filter((f) => f.startsWith('scrm-') && f.endsWith('.db'))
+          .sort()
+        files.slice(0, -7).forEach((f) => {
+          try { fs.unlinkSync(path.join(backupDir, f)) } catch {}
+        })
+      } catch (e) {
+        log('backup', 'error', `每日备份失败: ${e.message}`)
+      } finally {
+        scheduleDailyBackup()
+      }
+    }, ms + 1000)
+    timers.push(handle)
+  }
+  scheduleDailyBackup()
