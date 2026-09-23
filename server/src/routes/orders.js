@@ -5,6 +5,8 @@ import {
   verifyWxSignature,
   decryptWxEncrypt
 } from '../utils/wecom-crypto.js'
+import * as orderRepo from '../repositories/orderRepo.js'
+import * as customerRepo from '../repositories/customerRepo.js'
 
 const router = express.Router()
 
@@ -111,37 +113,22 @@ router.post('/', (req, res) => {
   const { order_no, customer_id, staff_id, amount, paid_amount, discount = 0, coupon_code = null, source = 'manual', status = 'paid', product_name, product_image, remark, order_at } = req.body
   if (!customer_id) return res.status(400).json({ error: 'customer_id 必填' })
   if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'amount 必填且 > 0' })
+
+  // 订单号生成 / 唯一性校验
   let no = order_no
   if (!no) {
     no = (source || 'OD').toUpperCase().slice(0, 2) + new Date().toISOString().replace(/\D/g, '').slice(0, 14) + String(Math.floor(Math.random() * 1000)).padStart(3, '0')
   }
-  const paid = paid_amount ?? (amount - Number(discount || 0))
-  const existing = db.prepare('SELECT id FROM orders WHERE order_no = ?').get(no)
-  if (existing) return res.status(409).json({ error: '订单号已存在' })
-  const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(Number(customer_id))
-  if (!customer) return res.status(404).json({ error: '客户不存在' })
+  if (orderRepo.findByOrderNo(no)) return res.status(409).json({ error: '订单号已存在' })
 
-  const tx = db.transaction(() => {
-    const r = db.prepare(`INSERT INTO orders
-      (order_no,customer_id,staff_id,amount,paid_amount,discount,coupon_code,source,status,product_name,product_image,remark,order_at,paid_at,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      no, Number(customer_id), staff_id ? Number(staff_id) : null,
-      Number(amount), Number(paid), Number(discount || 0),
-      coupon_code, source, status,
-      product_name || null, product_image || null, remark || null,
-      order_at || now(), (status === 'paid' || status === 'shipped' || status === 'completed') ? (order_at || now()) : null,
-      now()
-    )
-    // 同步客户画像
-    db.prepare(`UPDATE customers SET
-      spend = (SELECT COALESCE(SUM(paid_amount),0) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded')),
-      orders = (SELECT COUNT(*) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded')),
-      last_active = ?, updated_at = ?
-      WHERE id = ?`).run(now(), now(), Number(customer_id))
-    return r
+  // 客户必须存在才能落单（内部 API 严格；webhook 允许 customer_id NULL 走 upsertFromWebhook）
+  if (!customerRepo.findById(customer_id)) return res.status(404).json({ error: '客户不存在' })
+
+  const row = orderRepo.createOrder({
+    order_no: no, customer_id, staff_id, amount, paid_amount, discount,
+    coupon_code, source, status,
+    product_name, product_image, remark, order_at
   })
-  const r = tx()
-  const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(r.lastInsertRowid))
   res.json(enrichOrder(row))
 })
 
@@ -151,37 +138,15 @@ router.put('/:id/status', (req, res) => {
   const { status, remark } = req.body
   const allowed = ['pending', 'paid', 'shipped', 'completed', 'cancelled', 'refunded']
   if (!allowed.includes(status)) return res.status(400).json({ error: 'status 不合法' })
-  const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(id)
-  if (!row) return res.status(404).json({ error: '订单不存在' })
-  const patch = { status }
-  if (remark) patch.remark = remark
-  if (status === 'paid' && !row.paid_at) patch.paid_at = now()
-  if (status === 'shipped') patch.shipped_at = now()
-  if (status === 'completed') patch.completed_at = now()
-  const sets = Object.keys(patch).map(k => `${k} = ?`).join(', ')
-  const vals = [...Object.values(patch), id]
-  db.prepare(`UPDATE orders SET ${sets} WHERE id = ?`).run(...vals)
-  // 退款/取消需要扣回客户画像
-  if ((status === 'cancelled' || status === 'refunded') && !['cancelled', 'refunded'].includes(row.status)) {
-    db.prepare(`UPDATE customers SET
-      spend = (SELECT COALESCE(SUM(paid_amount),0) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded')),
-      orders = (SELECT COUNT(*) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded'))
-      WHERE id = ?`).run(row.customer_id)
-  }
-  const fresh = db.prepare('SELECT * FROM orders WHERE id = ?').get(id)
-  res.json(enrichOrder(fresh))
+  if (!orderRepo.findById(id)) return res.status(404).json({ error: '订单不存在' })
+  const row = orderRepo.updateOrderStatus(id, { status, remark })
+  res.json(enrichOrder(row))
 })
 
 // === 删除订单 ===
 router.delete('/:id', (req, res) => {
   const id = Number(req.params.id)
-  const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(id)
-  if (!row) return res.status(404).json({ error: '订单不存在' })
-  db.prepare('DELETE FROM orders WHERE id = ?').run(id)
-  db.prepare(`UPDATE customers SET
-    spend = (SELECT COALESCE(SUM(paid_amount),0) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded')),
-    orders = (SELECT COUNT(*) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded'))
-    WHERE id = ?`).run(row.customer_id)
+  if (!orderRepo.deleteOrder(id)) return res.status(404).json({ error: '订单不存在' })
   res.json({ ok: true })
 })
 
@@ -200,45 +165,13 @@ function handleShopOrder(body) {
   const orderNo = body.out_order_id || body.order_no || body.order_id
   if (!orderNo) return { ok: false, status: 400, error: '缺少 order_id/out_order_id' }
 
-  // 客户匹配: 手机号精确 → openid 模糊 → 姓名模糊
-  function normPhone(p) {
-    if (!p) return null
-    // 去所有非数字
-    const digits = String(p).replace(/\D/g, '')
-    if (digits.length === 11) return digits                        // 完整手机号
-    if (digits.length === 7) return digits                        // HLR 段（1380000）
-    // 脱敏号 138****0001 → 取后 8 位
-    const masked = String(p).replace(/[^\d*]/g, '')
-    const m = masked.match(/(\d{4})\*{1,4}(\d{4})$/)
-    if (m) return m[1] + m[2]                                    // 1380 0001
-    return digits || null
-  }
-  let customer = null
+  // 客户匹配（三级降级封装在 customerRepo.matchCustomer 中）
   const phoneRaw = body.phone || body.receiver_phone || body.mobile
-  const phoneNorm = normPhone(phoneRaw)
-  // 1) 手机号精确匹配
-  if (phoneNorm) {
-    // 完整号 (11位) 直接精确；脱敏号 (8位) 用 LIKE 匹配 customer_phone 尾段
-    if (phoneNorm.length === 11) {
-      customer = db.prepare('SELECT * FROM customers WHERE phone = ? LIMIT 1').get(phoneNorm)
-    } else if (phoneNorm.length >= 7) {
-      // 脱敏号 (8位) / HLR段 (7位): LIKE '%1395678' 匹配尾段 + LIKE '1395678%' 匹配开头
-      customer = db.prepare('SELECT * FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1').get(
-        `%${phoneNorm}`, phoneNorm + '%'
-      )
-    }
-  }
-  // 2) openid 模糊匹配（企微外部联系人 id / 视频号 openid）
-  if (!customer && body.openid) {
-    customer = db.prepare('SELECT * FROM customers WHERE wechat_nick LIKE ? OR notes LIKE ? OR ext_openid = ? LIMIT 1').get(
-      `%${body.openid}%`, `%${body.openid}%`, body.openid
-    )
-  }
-  // 3) 姓名 + 公司兜底
-  if (!customer && (body.customer_name || body.receiver_name)) {
-    const name = body.customer_name || body.receiver_name
-    customer = db.prepare('SELECT * FROM customers WHERE name LIKE ? OR wechat_nick LIKE ? LIMIT 1').get(`%${name}%`, `%${name}%`)
-  }
+  const customer = customerRepo.matchCustomer({
+    phone: phoneRaw,
+    openid: body.openid,
+    name: body.customer_name || body.receiver_name
+  })
 
   const statusMap = { 10: 'paid', 20: 'shipped', 30: 'completed', 40: 'cancelled', 50: 'refunded',
                       paid: 'paid', shipped: 'shipped', completed: 'completed', cancelled: 'cancelled', refunded: 'refunded' }
@@ -256,39 +189,22 @@ function handleShopOrder(body) {
   const paidAmount = Number(body.pay_amount || body.paid_amount || body.amount || amount)
   const discount = Math.max(0, amount - paidAmount)
 
-  const upsert = db.transaction(() => {
-    const existing = db.prepare('SELECT id FROM orders WHERE order_no = ?').get(orderNo)
-    if (existing) {
-      db.prepare(`UPDATE orders SET
-        customer_id=?, amount=?, paid_amount=?, discount=?, source=?, status=?, product_name=?, remark=?
-        WHERE id=?`).run(
-        customer ? customer.id : null, amount, paidAmount, discount,
-        'channels_shop', newStatus, productName,
-        body.remark || (customer ? null : `未匹配客户，phone=${phoneRaw || '-'}(${phoneNorm || '-'})，openid=${body.openid || '-'}，name=${body.customer_name || body.receiver_name || '-'}`),
-        existing.id
-      )
-      return { id: existing.id, updated: true }
-    }
-    const row = db.prepare(`INSERT INTO orders
-      (order_no,customer_id,amount,paid_amount,discount,coupon_code,source,status,product_name,remark,order_at,paid_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      orderNo, customer ? customer.id : null, amount, paidAmount, discount,
-      body.coupon_code || null, 'channels_shop', newStatus, productName,
-      body.remark || (customer ? null : `未匹配客户，phone=${phoneRaw || '-'}(${phoneNorm || '-'})，openid=${body.openid || '-'}，name=${body.customer_name || body.receiver_name || '-'}`),
-      body.create_time || body.order_at || now(),
-      (newStatus !== 'pending' ? (body.create_time || body.order_at || now()) : null)
-    )
-    return { id: Number(row.lastInsertRowid), updated: false }
+  const remark = body.remark || (customer
+    ? null
+    : `未匹配客户，phone=${phoneRaw || '-'}，openid=${body.openid || '-'}，name=${body.customer_name || body.receiver_name || '-'}`)
+
+  const r = orderRepo.upsertFromWebhook({
+    order_no: orderNo,
+    customer_id: customer ? customer.id : null,
+    amount, paid_amount: paidAmount, discount,
+    coupon_code: body.coupon_code || null,
+    source: 'channels_shop',
+    status: newStatus,
+    product_name: productName,
+    remark,
+    order_at: body.create_time || body.order_at || now(),
+    paid_at: newStatus !== 'pending' ? (body.create_time || body.order_at || now()) : null
   })
-
-  const r = upsert()
-
-  if (customer) {
-    db.prepare(`UPDATE customers SET
-      spend = (SELECT COALESCE(SUM(paid_amount),0) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded')),
-      orders = (SELECT COUNT(*) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded'))
-      WHERE id = ?`).run(customer.id)
-  }
 
   return { ok: true, order_id: r.id, matched: !!customer, customer_id: customer?.id || null, updated: r.updated }
 }
