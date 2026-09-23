@@ -287,6 +287,50 @@ function initSchema() {
   try { db.prepare('ALTER TABLE wecom_config ADD COLUMN wecom_webhook_ips TEXT').run() } catch {}
   try { db.prepare('ALTER TABLE wecom_config ADD COLUMN video_shop_webhook_ips TEXT').run() } catch {}
 
+  // P1-8: 废弃 wecom_config 上的 msg_audit runtime 字段（last_msgid / last_polled_at / status），
+  // 游标统一走 msg_audit_state 表。SQLite 不支持 DROP COLUMN，走 rebuild。
+  try {
+    const wcCols = db.prepare('PRAGMA table_info(wecom_config)').all().map(c => c.name)
+    const runtimeFields = ['msg_audit_last_msgid', 'msg_audit_last_polled_at', 'msg_audit_status']
+    const needsRebuild = runtimeFields.some(f => wcCols.includes(f))
+    if (needsRebuild) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS _wecom_config_new (
+          id INTEGER PRIMARY KEY CHECK(id=1),
+          corp_id TEXT DEFAULT '',
+          corp_secret TEXT DEFAULT '',
+          callback_token TEXT,
+          encoding_aes_key TEXT,
+          status TEXT DEFAULT 'unset',
+          last_sync_at TEXT,
+          ext_api_key TEXT,
+          video_shop_appid TEXT,
+          video_shop_secret TEXT,
+          video_shop_token TEXT,
+          video_shop_encoding_aes_key TEXT,
+          msg_audit_agent_id TEXT DEFAULT '1000002',
+          msg_audit_private_key TEXT,
+          msg_audit_enabled INTEGER DEFAULT 0,
+          wecom_webhook_ips TEXT,
+          video_shop_webhook_ips TEXT
+        );
+        INSERT INTO _wecom_config_new
+          (id, corp_id, corp_secret, callback_token, encoding_aes_key, status, last_sync_at,
+           ext_api_key, video_shop_appid, video_shop_secret, video_shop_token, video_shop_encoding_aes_key,
+           msg_audit_agent_id, msg_audit_private_key, msg_audit_enabled,
+           wecom_webhook_ips, video_shop_webhook_ips)
+          SELECT id, corp_id, corp_secret, callback_token, encoding_aes_key, status, last_sync_at,
+                 ext_api_key, video_shop_appid, video_shop_secret, video_shop_token, video_shop_encoding_aes_key,
+                 msg_audit_agent_id, msg_audit_private_key, msg_audit_enabled,
+                 wecom_webhook_ips, video_shop_webhook_ips
+          FROM wecom_config;
+        DROP TABLE wecom_config;
+        ALTER TABLE _wecom_config_new RENAME TO wecom_config;
+      `)
+      console.info('[db] wecom_config rebuilt: 移除了 msg_audit runtime 字段，游标已迁移到 msg_audit_state')
+    }
+  } catch (_e) {}
+
   // msg_audit_state：游标存储（不同 agent 隔离）
   try { db.prepare(`CREATE TABLE IF NOT EXISTS msg_audit_state (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

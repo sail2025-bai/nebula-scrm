@@ -187,9 +187,9 @@ export async function pollMsgAudit() {
       }
 
       // 更新 wecom_config 上的状态字段（给前端看）
-      db.prepare('UPDATE wecom_config SET msg_audit_last_polled_at = ?, msg_audit_status = ? WHERE id = 1').run(
-        fmt(new Date()), `ok: 拉取 ${polled} 条`
-      )
+      // runtime 状态统一写入 msg_audit_state 表（废弃 wecom_config 上的冗余字段）
+      db.prepare(`INSERT INTO msg_audit_state (agent_id, last_polled_at, total_messages, updated_at, error_msg) VALUES (?, ?, ?, ?, NULL)
+        ON CONFLICT(agent_id) DO UPDATE SET last_polled_at=excluded.last_polled_at, total_messages=excluded.total_messages, updated_at=excluded.updated_at, error_msg=NULL`).run(cfg.msg_audit_agent_id, fmt(new Date()), polled, fmt(new Date()))
     } catch (e) {
       errors.push(`${g.name}(${g.wecom_chat_id}): ${e.message}`)
       log('msgaudit', 'warn', `群 ${g.name} 拉取失败：${e.message}`)
@@ -197,9 +197,8 @@ export async function pollMsgAudit() {
   }
 
   if (errors.length) {
-    db.prepare('UPDATE wecom_config SET msg_audit_status = ?, msg_audit_last_polled_at = ? WHERE id = 1').run(
-      `error: ${errors[0].slice(0, 200)}`, fmt(new Date())
-    )
+    db.prepare(`INSERT INTO msg_audit_state (agent_id, last_polled_at, total_messages, updated_at, error_msg, last_error_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(agent_id) DO UPDATE SET last_polled_at=excluded.last_polled_at, updated_at=excluded.updated_at, error_msg=excluded.error_msg, last_error_at=excluded.last_error_at`).run(cfg.msg_audit_agent_id, fmt(new Date()), polled, fmt(new Date()), errors[0].slice(0, 200), fmt(new Date()))
   }
   log('msgaudit', 'info', `轮询完成：更新 ${updated}/${groups.length} 群，入库 ${polled} 条，错误 ${errors.length}`)
   return { polled, updated, total: groups.length, errors }

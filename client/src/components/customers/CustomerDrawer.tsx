@@ -164,7 +164,17 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
 
   const sortedFollowUps = [...followUps].sort((a, b) => parseTs(b.created_at) - parseTs(a.created_at))
 
-  const timeline = customer
+  interface TimelineEntry {
+    time: string
+    title: string
+    detail: string
+    source: string
+    color: string
+    icon?: string
+    amount?: number
+    status_color?: string
+  }
+  const timeline: TimelineEntry[] = customer
     ? [
         {
           time: customer.created_at,

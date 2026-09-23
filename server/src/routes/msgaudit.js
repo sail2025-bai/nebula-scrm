@@ -21,9 +21,12 @@ router.get('/status', (req, res) => {
     preflight_ok: preflight === null,
     preflight_issue: preflight,
     agent_id: cfg && cfg.msg_audit_agent_id || null,
-    last_msgid: cfg && cfg.msg_audit_last_msgid || null,
-    last_polled_at: cfg && cfg.msg_audit_last_polled_at || null,
-    status: cfg && cfg.msg_audit_status || null,
+    // runtime 字段统一从 msg_audit_state 读（wecom_config 上同名字段已废弃，仅保留静态配置）
+    last_msgid: state && state.last_msgid || null,
+    last_polled_at: state && state.last_polled_at || null,
+    status: state
+      ? (state.error_msg ? `error: ${state.error_msg.slice(0, 200)}` : `ok: 累计 ${state.total_messages || 0} 条`)
+      : null,
     groups_with_chat_id: groupsWithChat,
     total_messages_stored: messagesTotal,
     today_messages_stored: todayCount,

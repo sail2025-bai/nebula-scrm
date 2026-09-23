@@ -221,7 +221,10 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
     setPurchaseProcessing(true)
     try {
       const r = await api.recordPurchase(purchaseOpen.id, { order_no: `PURCHASE_${Date.now()}`, amount: amt, coupon_code: purchaseCode || undefined })
-      let msg = `下单成功！消费 ￥${r.amount}，累计消费 ￥${r.new_spend}`
+      // 后端目前只返回 { ok, order_id }，高级字段（new_spend / coupon / sop_triggered）留待后续补
+      const displayAmount = r.amount ?? amt
+      let msg = `下单成功！消费 ￥${displayAmount}`
+      if (r.new_spend !== undefined) msg += `，累计消费 ￥${r.new_spend}`
       if (r.coupon) msg += ` · 券核减 ￥${r.coupon.saved}`
       if (r.was_first_purchase) msg += ' · 首单达成！'
       if (r.sop_triggered) msg += ` · 自动触发「${r.sop_triggered.name}」SOP，下发 ${r.sop_triggered.coupon_issued} 张券`

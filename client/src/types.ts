@@ -364,9 +364,7 @@ export interface WecomConfig {
   msg_audit_agent_id: string | null
   msg_audit_private_key: string | null
   msg_audit_enabled: number
-  msg_audit_last_msgid: string | null
-  msg_audit_last_polled_at: string | null
-  msg_audit_status: string | null
+  // 注：msg_audit 游标不再挂在 wecom_config 上，统一从 msg_audit_state 表读（见 MsgAuditStatus.cursor）
 }
 
 export interface MsgAuditStatus {

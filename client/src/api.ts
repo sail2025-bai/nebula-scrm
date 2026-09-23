@@ -285,5 +285,26 @@ export const api = {
     request<Order>('/orders', { method: 'POST', body: JSON.stringify(payload) }),
   updateOrderStatus: (id: number, status: OrderStatus, remark?: string) =>
     request<Order>(`/orders/${id}/status`, { method: 'PUT', body: JSON.stringify({ status, remark }) }),
-  deleteOrder: (id: number) => request<{ ok: boolean }>(`/orders/${id}`, { method: 'DELETE' })
+  deleteOrder: (id: number) => request<{ ok: boolean }>(`/orders/${id}`, { method: 'DELETE' }),
+  recordPurchase: (customerId: number, payload: { order_no: string; amount: number; coupon_code?: string }) =>
+    request<{
+      ok: boolean; order_id: number;
+      amount?: number; new_spend?: number;
+      coupon?: { saved: number; code: string };
+      was_first_purchase?: boolean;
+      sop_triggered?: { name: string; coupon_issued: number } | null
+    }>('/orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        customer_id: customerId,
+        order_no: payload.order_no,
+        amount: payload.amount,
+        paid_amount: payload.amount,
+        coupon_code: payload.coupon_code || null,
+        source: 'manual',
+        status: 'paid',
+        product_name: '手动下单',
+        remark: '运营手动记录'
+      })
+    }),
 }
