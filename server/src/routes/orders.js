@@ -4,6 +4,7 @@ import { ipWhitelist } from '../middleware/ipWhitelist.js'
 import * as orderRepo from '../repositories/orderRepo.js'
 import * as customerRepo from '../repositories/customerRepo.js'
 import { decryptEncryptedCallback, handleEcho } from '../utils/webhooks.js'
+import { emit as emitEvent } from '../utils/events.js'
 
 const router = express.Router()
 
@@ -35,6 +36,22 @@ function enrichOrder(row) {
     source_label: SOURCE_LABELS[row.source] || row.source,
     status_label: STATUS_META[row.status]?.label || row.status,
     status_color: STATUS_META[row.status]?.color || 'bg-slate-100 text-slate-500'
+  }
+}
+
+/** 根据订单状态 emit 对应事件，幂等（prevStatus === row.status 不重复发） */
+function emitOrderLifecycle(row, prevStatus = null) {
+  if (!row || prevStatus === row.status) return
+  const base = { customer_id: row.customer_id, staff_id: row.staff_id, payload: JSON.stringify({
+    order_no: row.order_no, amount: row.paid_amount, product: row.product_name, source: row.source
+  }) }
+  emitEvent('order_created', base)
+  switch (row.status) {
+    case 'paid':      emitEvent('order_paid', base); break
+    case 'shipped':   emitEvent('order_shipped', base); break
+    case 'completed': emitEvent('order_completed', base); break
+    case 'cancelled': emitEvent('order_cancelled', base); break
+    case 'refunded':  emitEvent('order_refunded', base); break
   }
 }
 
@@ -126,6 +143,7 @@ router.post('/', (req, res) => {
     coupon_code, source, status,
     product_name, product_image, remark, order_at
   })
+  emitOrderLifecycle(row)
   res.json(enrichOrder(row))
 })
 
@@ -135,8 +153,10 @@ router.put('/:id/status', (req, res) => {
   const { status, remark } = req.body
   const allowed = ['pending', 'paid', 'shipped', 'completed', 'cancelled', 'refunded']
   if (!allowed.includes(status)) return res.status(400).json({ error: 'status 不合法' })
-  if (!orderRepo.findById(id)) return res.status(404).json({ error: '订单不存在' })
+  const prev = orderRepo.findById(id)
+  if (!prev) return res.status(404).json({ error: '订单不存在' })
   const row = orderRepo.updateOrderStatus(id, { status, remark })
+  emitOrderLifecycle(row, prev.status)
   res.json(enrichOrder(row))
 })
 
@@ -225,6 +245,10 @@ router.post('/webhook/channels-shop', ipWhitelist('video_shop_webhook_ips'), (re
   if (!result.ok) {
     return res.status(result.status || 400).json({ error: result.error })
   }
+
+  // webhook 订单生命周期事件（复用完整 row，避免 handleShopOrder 再查一次）
+  const fullRow = orderRepo.findById(result.order_id)
+  if (fullRow) emitOrderLifecycle(fullRow)
 
   res.json({
     errcode: 0, errmsg: 'success', ...result,

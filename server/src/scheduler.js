@@ -4,6 +4,7 @@ import { db } from './db.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { processPendingEvents, rescanAllCustomerStages } from './utils/events.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -21,6 +22,12 @@ export function startScheduler() {
   expireOldCoupons().catch((e) => log('scheduler', 'error', e.message))
   runInactiveCustomerSOPs().catch((e) => log('scheduler', 'error', e.message))
   cleanExpiredTags().catch((e) => log('scheduler', 'error', e.message))
+  // 事件总线：启动即扫一次积压 pending
+  try {
+    const r = processPendingEvents(100)
+    if (r.processed) log('scheduler', 'info', `启动事件消费: processed=${r.processed} sopRuns=${r.sopRuns} autoStaged=${r.autoStaged} errors=${r.errors}`)
+    else log('scheduler', 'info', '启动事件消费: 无积压 pending')
+  } catch (e) { log('scheduler', 'warn', `事件消费初始化跳过: ${e.message}`) }
 
   // A：每 30 分钟同步企微通讯录
   timers.push(setInterval(() => {
@@ -54,7 +61,24 @@ export function startScheduler() {
     pollMsgAudit().catch((e) => log('scheduler', 'error', `msgaudit poll: ${e.message}`))
   }, 5 * 60 * 1000))
 
-  // G：每日 0 点归零 today_messages
+  // G：每 1 分钟扫 events 表（A1 事件总线 → SOP / 客户分级）
+  timers.push(setInterval(() => {
+    try {
+      const r = processPendingEvents(100)
+      if (r.processed || r.errors) log('scheduler', 'info', `[事件] processed=${r.processed} sopRuns=${r.sopRuns} autoStaged=${r.autoStaged} errors=${r.errors}`)
+    } catch (e) { log('scheduler', 'error', `[事件] 消费异常: ${e.message}`) }
+  }, 60 * 1000))
+
+  // H：每 6 小时兜底全量客户分级重扫（A3，处理遗漏的 / last_active 自然衰减）
+  timers.push(setInterval(() => {
+    try {
+      const changed = rescanAllCustomerStages()
+      if (changed) log('scheduler', 'info', `[客户分级] 全量重扫，${changed} 客户 stage 变更`)
+      else log('scheduler', 'info', '[客户分级] 全量重扫：无变更')
+    } catch (e) { log('scheduler', 'error', `[客户分级] 重扫异常: ${e.message}`) }
+  }, 6 * 60 * 60 * 1000))
+
+  // I：每日 0 点归零 today_messages
   //   用递归 setTimeout 计算到下次 0 点的毫秒数，避免每分钟轮询 + GC 丢触发
   function scheduleMidnightZero() {
     const now = new Date()

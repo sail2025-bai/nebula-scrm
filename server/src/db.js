@@ -364,6 +364,21 @@ function initSchema() {
   try { db.prepare('CREATE INDEX IF NOT EXISTS idx_chat_messages_chat ON chat_messages(chat_id)').run() } catch {}
   try { db.prepare('CREATE INDEX IF NOT EXISTS idx_chat_messages_ts ON chat_messages(ts DESC)').run() } catch {}
 
+  // === 事件总线：所有业务事件 emit → events → scheduler 消费触发 SOP ===
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL,
+      customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+      staff_id INTEGER REFERENCES staff(id) ON DELETE SET NULL,
+      payload TEXT,                 -- JSON: 订单号 / 入群 chat_id / 关键词 / 金额变化等
+      status TEXT DEFAULT 'pending', -- pending → processing → done / failed
+      consumed_at TEXT,
+      error TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`).run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_events_pending ON events(status, created_at)').run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_events_customer ON events(customer_id)').run() } catch {}
+
   // === 完整订单台账（orders）===
   try { db.prepare(`CREATE TABLE IF NOT EXISTS orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

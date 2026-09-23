@@ -1,5 +1,6 @@
 import express from 'express'
 import { db, initSchema, now, fmt } from '../db.js'
+import { emit as emitEvent } from '../utils/events.js'
 
 initSchema()
 const router = express.Router()
@@ -67,42 +68,21 @@ router.post('/scan', (req, res) => {
     db.prepare('UPDATE qr_codes SET scan_count = scan_count + 1 WHERE id = ?').run(qr_code_id)
   })()
 
-  // === add_friend SOP 触发：新客户首次扫码 → 跑 trigger_type='add_friend' 的 SOP ===
+  // === emit 事件：扫码 = add_friend + 新客户建档 ===
   if (customer.created_at === customer.updated_at || !customer.updated_at) {
     // 简化判断：刚创建的客户（created_at = updated_at）视为新扫码
     try {
-      const addFriendSOPs = db.prepare(`SELECT * FROM sops WHERE active = 1 AND trigger_type = 'add_friend'`).all()
-      for (const sop of addFriendSOPs) {
-        const steps = JSON.parse(sop.steps || '[]')
-        let couponIssued = 0, tagApplied = 0
-        for (const step of steps) {
-          const stepType = step.type || step.action  // 兼容 type / action 两种字段
-          if (stepType === 'push_coupon' && step.coupon_id) {
-            const code = 'CF' + Math.random().toString(36).slice(2, 10).toUpperCase()
-            db.prepare(`INSERT INTO coupon_issues (coupon_id,customer_id,source,sop_id,sop_step_index,code,status)
-              VALUES (?,?,?,?,?,?, 'pending')`).run(
-              step.coupon_id, customer.id, `sop:add_friend:${sop.id}`, sop.id, steps.indexOf(step), code
-            )
-            couponIssued++
-          } else if (stepType === 'add_tag' && step.tag_name) {
-            // SOP 自动打的 tag 默认 30 天过期
-            const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().replace('T', ' ').slice(0, 19)
-            let tag = db.prepare('SELECT id FROM tags WHERE name = ?').get(step.tag_name)
-            if (!tag) {
-              const r = db.prepare('INSERT INTO tags (name, category, mode, expires_at) VALUES (?, "SOP自动", ?, ?)').run(step.tag_name, customer.customer_type === 'service' ? 'service' : 'retail', expires)
-              tag = { id: Number(r.lastInsertRowid) }
-            }
-            db.prepare('INSERT OR IGNORE INTO customer_tags (customer_id, tag_id) VALUES (?, ?)').run(customer.id, tag.id)
-            tagApplied++
-          }
-        }
-        db.prepare('UPDATE sops SET run_count = run_count + 1 WHERE id = ?').run(sop.id)
-        db.prepare(`INSERT INTO sop_runs (sop_id, triggered_by, target_count, success_count, outcome, created_at)
-          VALUES (?, 'public:add_friend', 1, 1, ?, CURRENT_TIMESTAMP)`).run(
-          sop.id, JSON.stringify({ couponIssued, tagApplied })
-        )
-      }
-    } catch (e) { /* SOP 触发失败不阻塞主流程 */ }
+      emitEvent('add_friend', {
+        customer_id: customer.id,
+        staff_id: qr.staff_id ?? null,
+        payload: JSON.stringify({ qr_code_id: qr_code_id, channel: qr.channel, auto_tags: autoTags })
+      })
+      emitEvent('customer_created', {
+        customer_id: customer.id,
+        staff_id: qr.staff_id ?? null,
+        payload: JSON.stringify({ source: 'qr_scan', channel: qr.channel })
+      })
+    } catch (e) { /* 事件 emit 不阻塞主流程 */ }
   }
 
   // 返回活码关联的活动信息（让前端知道接下来要做什么）

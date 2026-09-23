@@ -1,6 +1,7 @@
 import express from 'express'
 import { db, now, fmt, buildSegmentWhere } from '../db.js'
 import * as orderRepo from '../repositories/orderRepo.js'
+import { emit as emitEvent } from '../utils/events.js'
 
 const router = express.Router()
 
@@ -155,6 +156,7 @@ router.post('/', (req, res) => {
     const id = Number(r.lastInsertRowid)
     db.prepare('UPDATE customers SET code = ? WHERE id = ?').run((customerType === 'service' ? 'S' : 'C') + (1000 + id), id)
     if (Array.isArray(b.tags)) applyTags(id, b.tags)
+    emitEvent('customer_created', { customer_id: id, staff_id: b.staff_id ?? null, payload: JSON.stringify({ name: b.name, channel: b.channel }) })
     res.status(201).json(detail(id))
   } catch (e) {
     res.status(400).json({ error: '创建客户失败' })
