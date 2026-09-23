@@ -25,7 +25,10 @@ import type {
   WechatGroup,
   WecomConfig,
   WecomEvent,
-  WecomStatus
+  WecomStatus,
+  Order,
+  OrderStatus,
+  MsgAuditStatus
 } from './types'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -150,8 +153,25 @@ export const api = {
   getChannels: (mode: BizMode) => request<string[]>(`/channels${toQuery({ mode })}`),
 
   getWecomConfig: () => request<WecomConfig>('/wecom/config'),
-  saveWecomConfig: (payload: { corp_id: string; corp_secret: string; callback_token?: string | null; encoding_aes_key?: string | null }) =>
+  saveWecomConfig: (payload: {
+    corp_id: string
+    corp_secret: string
+    callback_token?: string | null
+    encoding_aes_key?: string | null
+    video_shop_appid?: string | null
+    video_shop_secret?: string | null
+    video_shop_token?: string | null
+    video_shop_encoding_aes_key?: string | null
+    ext_api_key?: string | null
+    msg_audit_agent_id?: string | null
+    msg_audit_private_key?: string | null
+    msg_audit_enabled?: number
+  }) =>
     request<WecomConfig>('/wecom/config', { method: 'PUT', body: JSON.stringify(payload) }),
+  // === 企微会话内容存档 ===
+  getMsgAuditStatus: () => request<MsgAuditStatus>('/msgaudit/status'),
+  pollMsgAudit: () => request<{ ok: boolean; polled?: number; updated?: number; total?: number; errors?: string[]; skipped?: boolean; reason?: string; error?: string }>('/msgaudit/poll', { method: 'POST' }),
+  recomputeMsgAudit: () => request<{ ok: boolean; recomputed: number; changed: number }>('/msgaudit/recompute', { method: 'POST' }),
   testWecomConnect: () => request<{ ok: boolean; status: WecomStatus; message: string }>('/wecom/test', { method: 'POST' }),
   syncWecomStaff: () => request<{ synced: number; mode: WecomStatus }>('/wecom/sync-staff', { method: 'POST' }),
   getWecomEvents: (limit = 50) => request<WecomEvent[]>(`/wecom/events${toQuery({ limit })}`),
@@ -207,8 +227,15 @@ export const api = {
   grabSeckill: (id: number, customer_id: number) =>
     request<{ ok: boolean; price: number; customer_id: number; activity_id: number; title: string; grab_at: string }>(`/seckill/${id}/grab`, { method: 'POST', body: JSON.stringify({ customer_id }) }),
 
-  // === P2: 外部订单对接 ===
-  recordPurchase: (customerId: number, payload: { order_no?: string; amount: number; coupon_code?: string }) =>
-    request<{ ok: boolean; order_no: string; amount: number; new_orders: number; new_spend: number; stage: string; was_first_purchase: boolean; coupon: { saved: number; coupon_id: number; coupon_name: string } | null; sop_triggered: { sop_id: number; name: string; coupon_issued: number } | null }>(
-      `/customers/${customerId}/purchase`, { method: 'POST', body: JSON.stringify(payload) })
+
+  // === P3: 订单台账 ===
+  getOrders: (query?: { status?: string; source?: string; customer_id?: number; min_amount?: number; search?: string; page?: number; pageSize?: number }) =>
+    request<{ total: number; page: number; pageSize: number; list: Order[] }>(`/orders${toQuery(query || {})}`),
+  getCustomerOrders: (customerId: number) => request<Order[]>(`/orders/customer/${customerId}`),
+  getOrder: (id: number) => request<Order>(`/orders/${id}`),
+  createOrder: (payload: Partial<Order> & { customer_id: number; amount: number }) =>
+    request<Order>('/orders', { method: 'POST', body: JSON.stringify(payload) }),
+  updateOrderStatus: (id: number, status: OrderStatus, remark?: string) =>
+    request<Order>(`/orders/${id}/status`, { method: 'PUT', body: JSON.stringify({ status, remark }) }),
+  deleteOrder: (id: number) => request<{ ok: boolean }>(`/orders/${id}`, { method: 'DELETE' })
 }

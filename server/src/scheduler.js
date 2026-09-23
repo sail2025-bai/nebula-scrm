@@ -1,4 +1,5 @@
 import { log, syncStaffWecom } from './wecom.js'
+import { pollMsgAudit, zeroTodayMessages } from './wecom-msgaudit.js'
 import { db } from './db.js'
 
 let timers = []
@@ -43,7 +44,24 @@ export function startScheduler() {
     cleanExpiredTags().catch((e) => log('scheduler', 'error', e.message))
   }, 60 * 60 * 1000))
 
-  log('scheduler', 'info', `调度器已注册 ${timers.length} 个定时器 (通讯录/群发/秒杀券过期/SOP/标签清理)`)
+  // F：每 5 分钟尝试拉取会话存档群聊消息（未开通时内部跳过）
+  timers.push(setInterval(() => {
+    pollMsgAudit().catch((e) => log('scheduler', 'error', `msgaudit poll: ${e.message}`))
+  }, 5 * 60 * 1000))
+
+  // G：每日 0 点归零 today_messages（配合每日零点后重新聚合使用）
+  //   用 1 分钟轮询 + 时间判断，避免 cron 解析依赖
+  let lastMidnight = ''
+  timers.push(setInterval(() => {
+    const now = new Date()
+    const ymd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    if (now.getHours() === 0 && now.getMinutes() === 0 && lastMidnight !== ymd) {
+      lastMidnight = ymd
+      zeroTodayMessages().catch((e) => log('scheduler', 'error', `msgaudit zero: ${e.message}`))
+    }
+  }, 60 * 1000))
+
+  log('scheduler', 'info', `调度器已注册 ${timers.length} 个定时器 (通讯录/群发/秒杀券过期/SOP/标签清理/会话存档轮询/每日归零)`)
 }
 
 export function stopScheduler() {

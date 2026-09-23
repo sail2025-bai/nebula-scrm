@@ -355,6 +355,32 @@ export interface WecomConfig {
   encoding_aes_key: string | null
   status: WecomStatus
   last_sync_at: string | null
+  video_shop_appid: string | null
+  video_shop_secret: string | null
+  video_shop_token: string | null
+  video_shop_encoding_aes_key: string | null
+  ext_api_key: string | null
+  // === 企微会话内容存档 ===
+  msg_audit_agent_id: string | null
+  msg_audit_private_key: string | null
+  msg_audit_enabled: number
+  msg_audit_last_msgid: string | null
+  msg_audit_last_polled_at: string | null
+  msg_audit_status: string | null
+}
+
+export interface MsgAuditStatus {
+  enabled: boolean
+  preflight_ok: boolean
+  preflight_issue: string | null
+  agent_id: string | null
+  last_msgid: string | null
+  last_polled_at: string | null
+  status: string | null
+  groups_with_chat_id: number
+  total_messages_stored: number
+  today_messages_stored: number
+  cursor: { agent_id: string; last_msgid: string | null; last_polled_at: string | null; total_messages: number } | null
 }
 
 export interface WecomEvent {
@@ -474,5 +500,35 @@ export interface SeckillActivity {
   start_at: string
   end_at: string
   active: number
+  created_at: string
+}
+
+// === 订单台账 ===
+export type OrderStatus = 'pending' | 'paid' | 'shipped' | 'completed' | 'cancelled' | 'refunded'
+export type OrderSource = 'manual' | 'seckill' | 'coupon' | 'channels_shop' | 'youzan' | 'weimeng' | 'wecom_mini' | 'sop' | 'ext_api'
+
+export interface Order {
+  id: number
+  order_no: string
+  customer_id: number
+  customerName?: string
+  customerWechat?: string
+  staff_id: number | null
+  amount: number
+  paid_amount: number
+  discount: number
+  coupon_code: string | null
+  source: OrderSource
+  source_label?: string
+  status: OrderStatus
+  status_label?: string
+  status_color?: string
+  product_name: string | null
+  product_image: string | null
+  remark: string | null
+  order_at: string
+  paid_at: string | null
+  shipped_at: string | null
+  completed_at: string | null
   created_at: string
 }

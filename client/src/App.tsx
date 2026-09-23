@@ -132,6 +132,8 @@ function App() {
           onMenuClick={() => setSidebarOpen(true)}
           userName={user.name}
           onLogout={handleLogout}
+          mode={mode}
+          onModeChange={handleModeChange}
         />
 
         <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6">

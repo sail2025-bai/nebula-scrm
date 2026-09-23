@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import { MODE_META, type BizMode, type SimulateEventPayload, type Staff, type WecomConfig, type WecomEvent, type WecomStatus } from '../types'
+import { MODE_META, type BizMode, type MsgAuditStatus, type SimulateEventPayload, type Staff, type WecomConfig, type WecomEvent, type WecomStatus } from '../types'
 import { useToast } from '../components/ui/Toast'
 import Empty from '../components/ui/Empty'
 import { formatDateTime } from '../utils'
@@ -61,9 +61,30 @@ interface ConfigForm {
   corp_secret: string
   callback_token: string
   encoding_aes_key: string
+  video_shop_appid: string
+  video_shop_secret: string
+  video_shop_token: string
+  video_shop_encoding_aes_key: string
+  ext_api_key: string
+  msg_audit_agent_id: string
+  msg_audit_private_key: string
+  msg_audit_enabled: boolean
 }
 
-const EMPTY_CONFIG: ConfigForm = { corp_id: '', corp_secret: '', callback_token: '', encoding_aes_key: '' }
+const EMPTY_CONFIG: ConfigForm = {
+  corp_id: '',
+  corp_secret: '',
+  callback_token: '',
+  encoding_aes_key: '',
+  video_shop_appid: '',
+  video_shop_secret: '',
+  video_shop_token: '',
+  video_shop_encoding_aes_key: '',
+  ext_api_key: '',
+  msg_audit_agent_id: '1000002',
+  msg_audit_private_key: '',
+  msg_audit_enabled: false
+}
 
 interface SimForm {
   changeType: SimulateEventPayload['changeType']
@@ -88,6 +109,8 @@ export default function WecomView() {
   const [syncing, setSyncing] = useState(false)
   const [injecting, setInjecting] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [polling, setPolling] = useState(false)
+  const [msgauditStatus, setMsgauditStatus] = useState<MsgAuditStatus | null>(null)
   const formInitedRef = useRef(false)
 
   const status: WecomStatus = config?.status ?? 'unset'
@@ -102,10 +125,33 @@ export default function WecomView() {
     api.getWecomEvents(50).then(setEvents).catch(() => {})
   }, [])
 
+  const loadMsgauditStatus = useCallback(() => {
+    api.getMsgAuditStatus().then(setMsgauditStatus).catch(() => {})
+  }, [])
+
+  const handlePollMsgAudit = () => {
+    setPolling(true)
+    api
+      .pollMsgAudit()
+      .then(res => {
+        if (res.skipped) {
+          showToast(`会话存档未就绪：${res.reason || ''}`, 'warning')
+        } else if (res.ok && res.polled !== undefined) {
+          showToast(`拉取完成：更新 ${res.updated}/${res.total} 群，入库 ${res.polled} 条`, 'success')
+        } else {
+          showToast(res.error || '拉取失败', 'warning')
+        }
+        loadMsgauditStatus()
+      })
+      .catch(e => showToast(e instanceof Error ? e.message : '拉取失败', 'warning'))
+      .finally(() => setPolling(false))
+  }
+
   useEffect(() => {
     loadConfig()
     loadEvents()
-  }, [loadConfig, loadEvents])
+    loadMsgauditStatus()
+  }, [loadConfig, loadEvents, loadMsgauditStatus])
 
   useEffect(() => {
     api.getStaff().then(setStaff).catch(() => {})
@@ -118,7 +164,15 @@ export default function WecomView() {
         corp_id: config.corp_id,
         corp_secret: config.corp_secret,
         callback_token: config.callback_token ?? '',
-        encoding_aes_key: config.encoding_aes_key ?? ''
+        encoding_aes_key: config.encoding_aes_key ?? '',
+        video_shop_appid: config.video_shop_appid ?? '',
+        video_shop_secret: config.video_shop_secret ?? '',
+        video_shop_token: config.video_shop_token ?? '',
+        video_shop_encoding_aes_key: config.video_shop_encoding_aes_key ?? '',
+        ext_api_key: config.ext_api_key ?? '',
+        msg_audit_agent_id: config.msg_audit_agent_id ?? '1000002',
+        msg_audit_private_key: config.msg_audit_private_key ?? '',
+        msg_audit_enabled: !!(config.msg_audit_enabled && Number(config.msg_audit_enabled) === 1)
       })
     }
   }, [config])
@@ -134,11 +188,20 @@ export default function WecomView() {
         corp_id: form.corp_id.trim(),
         corp_secret: form.corp_secret.trim(),
         callback_token: form.callback_token.trim() || null,
-        encoding_aes_key: form.encoding_aes_key.trim() || null
+        encoding_aes_key: form.encoding_aes_key.trim() || null,
+        video_shop_appid: form.video_shop_appid.trim() || null,
+        video_shop_secret: form.video_shop_secret.trim() || null,
+        video_shop_token: form.video_shop_token.trim() || null,
+        video_shop_encoding_aes_key: form.video_shop_encoding_aes_key.trim() || null,
+        ext_api_key: form.ext_api_key.trim() || null,
+        msg_audit_agent_id: form.msg_audit_agent_id.trim() || '1000002',
+        msg_audit_private_key: form.msg_audit_private_key.trim() || null,
+        msg_audit_enabled: form.msg_audit_enabled ? 1 : 0
       })
       .then(cfg => {
         setConfig(cfg)
-        showToast('企微应用凭据已保存', 'success')
+        loadMsgauditStatus()
+        showToast('企微/视频号小店/对接/会话存档配置已保存', 'success')
       })
       .catch(e => showToast(e instanceof Error ? e.message : '保存失败', 'warning'))
       .finally(() => setSavingConfig(false))
@@ -262,72 +325,263 @@ export default function WecomView() {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
-        <div className="bg-white rounded-2xl border border-slate-200/80 custom-shadow p-5">
-          <div className="flex items-center gap-2.5 mb-4">
-            <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-sm shrink-0">
-              <i className="fa-solid fa-key" />
-            </span>
-            <div>
-              <h4 className="font-bold text-slate-900 text-sm">企微应用凭据配置</h4>
-              <p className="text-[11px] text-slate-400 mt-0.5">填写自建应用凭证，用于通讯录拉取与回调验签</p>
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-slate-200/80 custom-shadow p-5">
+            <div className="flex items-center gap-2.5 mb-4">
+              <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-sm shrink-0">
+                <i className="fa-solid fa-key" />
+              </span>
+              <div>
+                <h4 className="font-bold text-slate-900 text-sm">企微应用凭据配置</h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">填写自建应用凭证，用于通讯录拉取与回调验签</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  企业ID <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  value={form.corp_id}
+                  onChange={e => setForm(f => ({ ...f, corp_id: e.target.value }))}
+                  placeholder="例如：ww8a2f6c3d5e7b9a"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  应用Secret <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  value={form.corp_secret}
+                  onChange={e => setForm(f => ({ ...f, corp_secret: e.target.value }))}
+                  placeholder="自建应用的凭证密钥"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">回调Token</label>
+                <input
+                  value={form.callback_token}
+                  onChange={e => setForm(f => ({ ...f, callback_token: e.target.value }))}
+                  placeholder="接收消息配置中的 Token"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">EncodingAESKey</label>
+                <input
+                  value={form.encoding_aes_key}
+                  onChange={e => setForm(f => ({ ...f, encoding_aes_key: e.target.value }))}
+                  placeholder="43位消息加解密密钥"
+                  className={inputCls}
+                />
+              </div>
             </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                企业ID <span className="text-rose-500">*</span>
-              </label>
-              <input
-                value={form.corp_id}
-                onChange={e => setForm(f => ({ ...f, corp_id: e.target.value }))}
-                placeholder="例如：ww8a2f6c3d5e7b9a"
-                className={inputCls}
-              />
+
+          <div className="bg-white rounded-2xl border border-slate-200/80 custom-shadow p-5">
+            <div className="flex items-center gap-2.5 mb-4">
+              <span className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center text-sm shrink-0">
+                <i className="fa-solid fa-video" />
+              </span>
+              <div>
+                <h4 className="font-bold text-slate-900 text-sm">视频号小店订单回调配置</h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">接收视频号小店下单/支付回调，加密协议与企微独立（WXBizMsgCrypt）</p>
+              </div>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                应用Secret <span className="text-rose-500">*</span>
-              </label>
-              <input
-                value={form.corp_secret}
-                onChange={e => setForm(f => ({ ...f, corp_secret: e.target.value }))}
-                placeholder="自建应用的凭证密钥"
-                className={inputCls}
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">视频号 AppID</label>
+                <input
+                  value={form.video_shop_appid}
+                  onChange={e => setForm(f => ({ ...f, video_shop_appid: e.target.value }))}
+                  placeholder="视频号小店的 AppID"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">视频号 Secret</label>
+                <input
+                  value={form.video_shop_secret}
+                  onChange={e => setForm(f => ({ ...f, video_shop_secret: e.target.value }))}
+                  placeholder="视频号小店的 AppSecret"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">回调 Token</label>
+                <input
+                  value={form.video_shop_token}
+                  onChange={e => setForm(f => ({ ...f, video_shop_token: e.target.value }))}
+                  placeholder="视频号小店回调配置中的 Token"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">EncodingAESKey</label>
+                <input
+                  value={form.video_shop_encoding_aes_key}
+                  onChange={e => setForm(f => ({ ...f, video_shop_encoding_aes_key: e.target.value }))}
+                  placeholder="43位消息加解密密钥"
+                  className={inputCls}
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">回调Token</label>
-              <input
-                value={form.callback_token}
-                onChange={e => setForm(f => ({ ...f, callback_token: e.target.value }))}
-                placeholder="接收消息配置中的 Token"
-                className={inputCls}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">EncodingAESKey</label>
-              <input
-                value={form.encoding_aes_key}
-                onChange={e => setForm(f => ({ ...f, encoding_aes_key: e.target.value }))}
-                placeholder="43位消息加解密密钥"
-                className={inputCls}
-              />
+            <div className="mt-3 text-[11px] text-slate-400 flex items-start gap-1.5">
+              <i className="fa-solid fa-circle-info mt-0.5 shrink-0" />
+              <span>回调地址：<code className="font-mono">{window.location.origin}/api/orders/webhook/channels-shop</code></span>
             </div>
           </div>
-          <div className="mt-4 flex items-center gap-2">
+
+          <div className="bg-white rounded-2xl border border-slate-200/80 custom-shadow p-5">
+            <div className="flex items-center gap-2.5 mb-4">
+              <span className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center text-sm shrink-0">
+                <i className="fa-solid fa-plug" />
+              </span>
+              <div>
+                <h4 className="font-bold text-slate-900 text-sm">第三方对接 API Key</h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">供有赞/微盟/自建系统等外部系统调用订单写入接口使用</p>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Ext API Key</label>
+              <input
+                value={form.ext_api_key}
+                onChange={e => setForm(f => ({ ...f, ext_api_key: e.target.value }))}
+                placeholder="留空则允许开发模式下免 key 调用；正式环境请填写强随机字符串"
+                className={inputCls}
+              />
+            </div>
+            <div className="mt-3 flex items-center gap-2 flex-wrap text-[11px] text-slate-400">
+              <span className="px-2 py-0.5 bg-slate-100 rounded font-mono">POST /api/ext/orders</span>
+              <span>•</span>
+              <span>Header: <code className="font-mono text-slate-600">X-API-Key</code></span>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200/80 custom-shadow p-5">
+            <div className="flex items-center gap-2.5 mb-4">
+              <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center text-sm shrink-0">
+                <i className="fa-solid fa-chart-simple" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="font-bold text-slate-900 text-sm">企微会话内容存档（群聊消息数统计）</h4>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.msg_audit_enabled}
+                      onChange={e => setForm(f => ({ ...f, msg_audit_enabled: e.target.checked }))}
+                      className="sr-only peer"
+                    />
+                    <span className={`relative w-8 h-4 rounded-full transition ${form.msg_audit_enabled ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                      <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-all ${form.msg_audit_enabled ? 'left-[18px]' : 'left-0.5'}`} />
+                    </span>
+                    <span className={`text-[11px] font-semibold ${form.msg_audit_enabled ? 'text-emerald-600' : 'text-slate-400'}`}>
+                      {form.msg_audit_enabled ? '已启用' : '未启用'}
+                    </span>
+                  </label>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  开通企微会话存档后，自动拉取群聊消息解密入库，按群每日聚合 <code className="font-mono text-slate-600">today_messages</code>。未开通时安全跳过。
+                </p>
+              </div>
+            </div>
+
+            {/* 状态面板 */}
+            {msgauditStatus && (
+              <div className="mb-4 p-3 bg-slate-50 rounded-lg border border-slate-100 text-[11px]">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className={`px-2 py-0.5 rounded font-semibold ${msgauditStatus.preflight_ok ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {msgauditStatus.preflight_ok ? '就绪' : '待配置'}
+                  </span>
+                  {msgauditStatus.status && (
+                    <span className="text-slate-500 truncate">{msgauditStatus.status}</span>
+                  )}
+                </div>
+                {!msgauditStatus.preflight_ok && msgauditStatus.preflight_issue && (
+                  <div className="text-amber-700 mb-2">⚠️ {msgauditStatus.preflight_issue}</div>
+                )}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-slate-600">
+                  <div>
+                    <div className="text-slate-400">关联群</div>
+                    <div className="font-bold text-slate-800">{msgauditStatus.groups_with_chat_id}</div>
+                  </div>
+                  <div>
+                    <div className="text-slate-400">今日入库</div>
+                    <div className="font-bold text-slate-800">{msgauditStatus.today_messages_stored}</div>
+                  </div>
+                  <div>
+                    <div className="text-slate-400">累计入库</div>
+                    <div className="font-bold text-slate-800">{msgauditStatus.total_messages_stored}</div>
+                  </div>
+                  <div>
+                    <div className="text-slate-400">上次拉取</div>
+                    <div className="font-bold text-slate-800 truncate">{msgauditStatus.last_polled_at ?? '尚未'}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">AgentID</label>
+                <input
+                  value={form.msg_audit_agent_id}
+                  onChange={e => setForm(f => ({ ...f, msg_audit_agent_id: e.target.value }))}
+                  placeholder="默认 1000002"
+                  className={inputCls}
+                  disabled={!form.msg_audit_enabled}
+                />
+                <p className="text-[10px] text-slate-400 mt-1">开通会话存档后由企微分配的 agent_id，通常为 1000002</p>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">RSA 私钥（用于解密消息）</label>
+                <textarea
+                  value={form.msg_audit_private_key}
+                  onChange={e => setForm(f => ({ ...f, msg_audit_private_key: e.target.value }))}
+                  rows={4}
+                  placeholder="-----BEGIN RSA PRIVATE KEY----- ... -----END RSA PRIVATE KEY-----"
+                  className={`${inputCls} font-mono text-[10px] resize-y`}
+                  disabled={!form.msg_audit_enabled}
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  会话存档用 RSA 加密返回消息体，需用私钥解密。请妥善保管（生产环境建议从服务器密钥管理读取）
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center gap-2 flex-wrap">
+              <button
+                onClick={handlePollMsgAudit}
+                disabled={polling || !msgauditStatus?.preflight_ok}
+                title={!msgauditStatus?.preflight_ok ? msgauditStatus?.preflight_issue || '请先完成配置并启用' : '立即拉取一轮'}
+                className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition"
+              >
+                <i className={`fa-solid fa-bolt ${polling ? 'animate-pulse' : ''}`} />
+                <span>{polling ? '拉取中...' : '立即拉取群聊消息'}</span>
+              </button>
+              <span className="text-[10px] text-slate-400">
+                启用后系统每 5 分钟自动拉取，每日 0 点归零今日计数。群需先通过企微回调关联 <code className="font-mono text-slate-600">wecom_chat_id</code>
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
             <button
               onClick={handleSaveConfig}
               disabled={savingConfig}
               className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition"
             >
-              {savingConfig ? '保存中...' : '保存配置'}
+              {savingConfig ? '保存中...' : '保存全部配置'}
             </button>
             <button
               onClick={handleTest}
               disabled={testing}
               className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 rounded-lg text-xs font-medium transition"
             >
-              {testing ? '测试中...' : '测试连接'}
+              {testing ? '测试中...' : '测试企微连接'}
             </button>
           </div>
         </div>

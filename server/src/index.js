@@ -22,6 +22,8 @@ import couponsRouter from './routes/coupons.js'
 import seckillRouter from './routes/seckill.js'
 import publicRouter from './routes/public.js'
 import extRouter from './routes/ext.js'
+import ordersRouter from './routes/orders.js'
+import msgauditRouter from './routes/msgaudit.js'
 
 const app = express()
 app.use(cors())
@@ -49,6 +51,8 @@ app.use('/api/coupons', couponsRouter)
 app.use('/api/seckill', seckillRouter)
 app.use('/api/public', publicRouter)
 app.use('/api/ext', extRouter)
+app.use('/api/orders', ordersRouter)
+app.use('/api/msgaudit', msgauditRouter)
 
 // --- 前端生产构建静态托管（单进程一体化）---
 import path from 'node:path'

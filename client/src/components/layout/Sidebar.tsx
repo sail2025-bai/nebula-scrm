@@ -74,13 +74,39 @@ export default function Sidebar({
       } md:translate-x-0 md:shadow-none`}
     >
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="h-16 flex items-center px-6 border-b border-slate-100 gap-3 shrink-0">
+        {/* 左上角：品牌 Logo + B/C 图标切换 */}
+        <div className="h-16 flex items-center px-4 gap-3 shrink-0 border-b border-slate-100">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-white shadow-md shadow-emerald-200 shrink-0">
             <i className="fa-solid fa-users-viewfinder text-lg" />
           </div>
-          <div className="min-w-0">
-            <h1 className="font-bold text-slate-900 leading-none tracking-tight truncate">星云企微SCRM</h1>
-            <span className="text-[11px] text-emerald-600 font-medium tracking-wide hidden sm:block">私域全链路增长引擎</span>
+          <div className="min-w-0 flex-1">
+            <h1 className="font-bold text-slate-900 leading-none tracking-tight truncate text-sm">星云企微SCRM</h1>
+            <span className="text-[10px] text-emerald-600 font-medium tracking-wide truncate block">私域增长引擎</span>
+          </div>
+          {/* B/C 端图标切换 */}
+          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5 shrink-0">
+            <button
+              title="B端·线索与大客户"
+              onClick={() => mode !== 'service' && onModeChange('service')}
+              className={`w-8 h-8 rounded-md flex items-center justify-center transition ${
+                mode === 'service'
+                  ? 'bg-white shadow-sm text-emerald-600'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <i className="fa-solid fa-briefcase text-xs" />
+            </button>
+            <button
+              title="C端·消费与会员零售"
+              onClick={() => mode !== 'retail' && onModeChange('retail')}
+              className={`w-8 h-8 rounded-md flex items-center justify-center transition ${
+                mode === 'retail'
+                  ? 'bg-white shadow-sm text-emerald-600'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <i className="fa-solid fa-cart-shopping text-xs" />
+            </button>
           </div>
           <button
             onClick={onMobileClose}
@@ -90,39 +116,19 @@ export default function Sidebar({
           </button>
         </div>
 
-        <div className="p-4 space-y-2">
-          <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 flex items-center justify-between cursor-pointer hover:bg-slate-100/70 transition">
-            <div className="flex items-center gap-2.5 overflow-hidden">
-              <span className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs shrink-0">
-                {MODE_META[mode].orgBadge}
-              </span>
-              <div className="truncate">
-                <div className="text-xs font-semibold text-slate-800 truncate">{MODE_META[mode].orgName}</div>
-                <div className="text-[10px] text-slate-400">{orgSubText}</div>
-              </div>
+        {/* 当前模式下的组织卡片 */}
+        <div className="px-4 pt-3 pb-2">
+          <div className="bg-gradient-to-r from-slate-50 to-emerald-50/40 border border-slate-200/60 rounded-xl px-3 py-2 flex items-center gap-2.5">
+            <span className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs shrink-0">
+              {MODE_META[mode].orgBadge}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-semibold text-slate-800 truncate">{MODE_META[mode].orgName}</div>
+              <div className="text-[10px] text-slate-500 truncate">{orgSubText}</div>
             </div>
-            <i className="fa-solid fa-chevron-down text-xs text-slate-400" />
-          </div>
-
-          <div className="bg-slate-100/90 p-1 rounded-xl flex border border-slate-200/60">
-            {(['service', 'retail'] as BizMode[]).map((m) => {
-              const active = mode === m
-              return (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => {
-                    if (!active) onModeChange(m)
-                  }}
-                  className={`flex-1 py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 transition ${
-                    active ? 'bg-white shadow-xs text-emerald-700 font-semibold' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <i className={`${MODE_META[m].icon} text-[11px]`} />
-                  <span className="text-[11px] whitespace-nowrap">{MODE_META[m].label}</span>
-                </button>
-              )
-            })}
+            <span className="text-[10px] font-medium text-emerald-600 bg-white px-1.5 py-0.5 rounded border border-emerald-100 shrink-0">
+              {MODE_META[mode].shortLabel}
+            </span>
           </div>
         </div>
 

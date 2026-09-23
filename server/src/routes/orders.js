@@ -1,0 +1,365 @@
+import express from 'express'
+import { db, now } from '../db.js'
+import {
+  verifyWxSignature,
+  decryptWxEncrypt
+} from '../utils/wecom-crypto.js'
+
+const router = express.Router()
+
+const SOURCE_LABELS = {
+  manual: '手动录入',
+  seckill: '限时秒杀',
+  coupon: '优惠券核销',
+  channels_shop: '视频号小店',
+  youzan: '有赞商城',
+  weimeng: '微盟小程序',
+  wecom_mini: '企微小程序',
+  sop: 'SOP 自动触达',
+  ext_api: '外部 API 同步'
+}
+
+const STATUS_META = {
+  pending: { label: '待支付', color: 'bg-amber-100 text-amber-700' },
+  paid: { label: '已支付', color: 'bg-blue-100 text-blue-700' },
+  shipped: { label: '已发货', color: 'bg-indigo-100 text-indigo-700' },
+  completed: { label: '已完成', color: 'bg-emerald-100 text-emerald-700' },
+  cancelled: { label: '已取消', color: 'bg-slate-100 text-slate-500' },
+  refunded: { label: '已退款', color: 'bg-rose-100 text-rose-700' }
+}
+
+function enrichOrder(row) {
+  if (!row) return null
+  return {
+    ...row,
+    source_label: SOURCE_LABELS[row.source] || row.source,
+    status_label: STATUS_META[row.status]?.label || row.status,
+    status_color: STATUS_META[row.status]?.color || 'bg-slate-100 text-slate-500'
+  }
+}
+
+// === 全量列表 ===
+router.get('/', (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page) || 1)
+  const pageSize = Math.min(200, Math.max(1, parseInt(req.query.pageSize) || 20))
+  const clauses = []
+  const params = []
+  const { status, source, customer_id, min_amount, start, end, search } = req.query
+  if (status) { clauses.push('orders.status = ?'); params.push(status) }
+  if (source) { clauses.push('orders.source = ?'); params.push(source) }
+  if (customer_id) { clauses.push('orders.customer_id = ?'); params.push(Number(customer_id)) }
+  if (min_amount) { clauses.push('orders.paid_amount >= ?'); params.push(Number(min_amount)) }
+  if (start) { clauses.push('orders.order_at >= ?'); params.push(String(start)) }
+  if (end) { clauses.push('orders.order_at <= ?'); params.push(String(end)) }
+  if (search) {
+    clauses.push('(orders.order_no LIKE ? OR orders.product_name LIKE ? OR customers.name LIKE ?)')
+    const like = `%${search}%`
+    params.push(like, like, like)
+  }
+  const join = ' LEFT JOIN customers ON customers.id = orders.customer_id'
+  const whereSql = clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''
+  const total = db.prepare(`SELECT COUNT(*) AS n FROM orders${join}${whereSql}`).get(...params).n
+  const rows = db.prepare(`
+    SELECT orders.*, customers.name AS customerName, customers.wechat_nick AS customerWechat
+    FROM orders${join}${whereSql}
+    ORDER BY orders.order_at DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, pageSize, (page - 1) * pageSize)
+  res.json({
+    total,
+    page,
+    pageSize,
+    list: rows.map(enrichOrder)
+  })
+})
+
+// === 按客户查订单 ===
+router.get('/customer/:id', (req, res) => {
+  const customerId = Number(req.params.id)
+  if (!Number.isInteger(customerId)) return res.status(400).json({ error: 'customer id 非法' })
+  const rows = db.prepare(`
+    SELECT orders.*, customers.name AS customerName
+    FROM orders LEFT JOIN customers ON customers.id = orders.customer_id
+    WHERE orders.customer_id = ?
+    ORDER BY orders.order_at DESC
+  `).all(customerId)
+  res.json(rows.map(enrichOrder))
+})
+
+// === 按订单号查询（外部系统对账用）===
+router.get('/by-no/:orderNo', (req, res) => {
+  const row = db.prepare('SELECT * FROM orders WHERE order_no = ?').get(req.params.orderNo)
+  if (!row) return res.status(404).json({ error: '订单不存在' })
+  res.json(enrichOrder(row))
+})
+
+// === 单订单详情 ===
+router.get('/:id', (req, res) => {
+  const id = Number(req.params.id)
+  const row = db.prepare(`
+    SELECT orders.*, customers.name AS customerName, customers.code AS customerCode
+    FROM orders LEFT JOIN customers ON customers.id = orders.customer_id
+    WHERE orders.id = ?
+  `).get(id)
+  if (!row) return res.status(404).json({ error: '订单不存在' })
+  res.json(enrichOrder(row))
+})
+
+// === 创建订单（内部）===
+router.post('/', (req, res) => {
+  const { order_no, customer_id, staff_id, amount, paid_amount, discount = 0, coupon_code = null, source = 'manual', status = 'paid', product_name, product_image, remark, order_at } = req.body
+  if (!customer_id) return res.status(400).json({ error: 'customer_id 必填' })
+  if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'amount 必填且 > 0' })
+  let no = order_no
+  if (!no) {
+    no = (source || 'OD').toUpperCase().slice(0, 2) + new Date().toISOString().replace(/\D/g, '').slice(0, 14) + String(Math.floor(Math.random() * 1000)).padStart(3, '0')
+  }
+  const paid = paid_amount ?? (amount - Number(discount || 0))
+  const existing = db.prepare('SELECT id FROM orders WHERE order_no = ?').get(no)
+  if (existing) return res.status(409).json({ error: '订单号已存在' })
+  const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(Number(customer_id))
+  if (!customer) return res.status(404).json({ error: '客户不存在' })
+
+  const tx = db.transaction(() => {
+    const r = db.prepare(`INSERT INTO orders
+      (order_no,customer_id,staff_id,amount,paid_amount,discount,coupon_code,source,status,product_name,product_image,remark,order_at,paid_at,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      no, Number(customer_id), staff_id ? Number(staff_id) : null,
+      Number(amount), Number(paid), Number(discount || 0),
+      coupon_code, source, status,
+      product_name || null, product_image || null, remark || null,
+      order_at || now(), (status === 'paid' || status === 'shipped' || status === 'completed') ? (order_at || now()) : null,
+      now()
+    )
+    // 同步客户画像
+    db.prepare(`UPDATE customers SET
+      spend = (SELECT COALESCE(SUM(paid_amount),0) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded')),
+      orders = (SELECT COUNT(*) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded')),
+      last_active = ?, updated_at = ?
+      WHERE id = ?`).run(now(), now(), Number(customer_id))
+    return r
+  })
+  const r = tx()
+  const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(r.lastInsertRowid))
+  res.json(enrichOrder(row))
+})
+
+// === 更新订单状态（发货/完成/退款）===
+router.put('/:id/status', (req, res) => {
+  const id = Number(req.params.id)
+  const { status, remark } = req.body
+  const allowed = ['pending', 'paid', 'shipped', 'completed', 'cancelled', 'refunded']
+  if (!allowed.includes(status)) return res.status(400).json({ error: 'status 不合法' })
+  const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(id)
+  if (!row) return res.status(404).json({ error: '订单不存在' })
+  const patch = { status }
+  if (remark) patch.remark = remark
+  if (status === 'paid' && !row.paid_at) patch.paid_at = now()
+  if (status === 'shipped') patch.shipped_at = now()
+  if (status === 'completed') patch.completed_at = now()
+  const sets = Object.keys(patch).map(k => `${k} = ?`).join(', ')
+  const vals = [...Object.values(patch), id]
+  db.prepare(`UPDATE orders SET ${sets} WHERE id = ?`).run(...vals)
+  // 退款/取消需要扣回客户画像
+  if ((status === 'cancelled' || status === 'refunded') && !['cancelled', 'refunded'].includes(row.status)) {
+    db.prepare(`UPDATE customers SET
+      spend = (SELECT COALESCE(SUM(paid_amount),0) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded')),
+      orders = (SELECT COUNT(*) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded'))
+      WHERE id = ?`).run(row.customer_id)
+  }
+  const fresh = db.prepare('SELECT * FROM orders WHERE id = ?').get(id)
+  res.json(enrichOrder(fresh))
+})
+
+// === 删除订单 ===
+router.delete('/:id', (req, res) => {
+  const id = Number(req.params.id)
+  const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(id)
+  if (!row) return res.status(404).json({ error: '订单不存在' })
+  db.prepare('DELETE FROM orders WHERE id = ?').run(id)
+  db.prepare(`UPDATE customers SET
+    spend = (SELECT COALESCE(SUM(paid_amount),0) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded')),
+    orders = (SELECT COUNT(*) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded'))
+    WHERE id = ?`).run(row.customer_id)
+  res.json({ ok: true })
+})
+
+// === 视频号小店 / 第三方 webhook（完整实现）===
+// 参考 https://developers.weixin.qq.com/doc/channels/API/order/notify.html
+//
+// 两种请求形态：
+// A) 真实微信加密回调  → Header: X-WX-Signature + X-WX-Timestamp + X-WX-Nonce
+//                       Body JSON: { Encrypt, MsgSignature, Timestamp, Nonce, ToUserName }
+//                       流程: 验签 → AES 解密 → 拿明文 JSON
+// B) 裸 JSON（第三方 SaaS / 手动测试）→ 直接解析
+//
+// 统一解析完交给 handleShopOrder() 做订单 upsert + 客户画像同步
+
+function handleShopOrder(body) {
+  const orderNo = body.out_order_id || body.order_no || body.order_id
+  if (!orderNo) return { ok: false, status: 400, error: '缺少 order_id/out_order_id' }
+
+  // 客户匹配: 手机号精确 → openid 模糊 → 姓名模糊
+  function normPhone(p) {
+    if (!p) return null
+    // 去所有非数字
+    const digits = String(p).replace(/\D/g, '')
+    if (digits.length === 11) return digits                        // 完整手机号
+    if (digits.length === 7) return digits                        // HLR 段（1380000）
+    // 脱敏号 138****0001 → 取后 8 位
+    const masked = String(p).replace(/[^\d*]/g, '')
+    const m = masked.match(/(\d{4})\*{1,4}(\d{4})$/)
+    if (m) return m[1] + m[2]                                    // 1380 0001
+    return digits || null
+  }
+  let customer = null
+  const phoneRaw = body.phone || body.receiver_phone || body.mobile
+  const phoneNorm = normPhone(phoneRaw)
+  // 1) 手机号精确匹配
+  if (phoneNorm) {
+    // 完整号 (11位) 直接精确；脱敏号 (8位) 用 LIKE 匹配 customer_phone 尾段
+    if (phoneNorm.length === 11) {
+      customer = db.prepare('SELECT * FROM customers WHERE phone = ? LIMIT 1').get(phoneNorm)
+    } else if (phoneNorm.length >= 7) {
+      // 脱敏号 (8位) / HLR段 (7位): LIKE '%1395678' 匹配尾段 + LIKE '1395678%' 匹配开头
+      customer = db.prepare('SELECT * FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1').get(
+        `%${phoneNorm}`, phoneNorm + '%'
+      )
+    }
+  }
+  // 2) openid 模糊匹配（企微外部联系人 id / 视频号 openid）
+  if (!customer && body.openid) {
+    customer = db.prepare('SELECT * FROM customers WHERE wechat_nick LIKE ? OR notes LIKE ? OR ext_openid = ? LIMIT 1').get(
+      `%${body.openid}%`, `%${body.openid}%`, body.openid
+    )
+  }
+  // 3) 姓名 + 公司兜底
+  if (!customer && (body.customer_name || body.receiver_name)) {
+    const name = body.customer_name || body.receiver_name
+    customer = db.prepare('SELECT * FROM customers WHERE name LIKE ? OR wechat_nick LIKE ? LIMIT 1').get(`%${name}%`, `%${name}%`)
+  }
+
+  const statusMap = { 10: 'paid', 20: 'shipped', 30: 'completed', 40: 'cancelled', 50: 'refunded',
+                      paid: 'paid', shipped: 'shipped', completed: 'completed', cancelled: 'cancelled', refunded: 'refunded' }
+  const rawStatus = body.status
+  let newStatus = statusMap[rawStatus]
+  if (!newStatus && typeof rawStatus === 'string') newStatus = statusMap[rawStatus.toLowerCase()]
+  if (!newStatus) newStatus = 'paid'
+
+  const items = body.items || body.products || []
+  const productName = items.length
+    ? items.map(i => `${i.title || i.name || i.product_name || ''}${i.num || i.count ? ' x' + i.num : ''}`).filter(Boolean).join(', ')
+    : body.product_name || null
+
+  const amount = Number(body.total_amount || body.amount || items.reduce((s, i) => s + Number(i.num || i.count || 1) * Number(i.price || 0), 0) || 0)
+  const paidAmount = Number(body.pay_amount || body.paid_amount || body.amount || amount)
+  const discount = Math.max(0, amount - paidAmount)
+
+  const upsert = db.transaction(() => {
+    const existing = db.prepare('SELECT id FROM orders WHERE order_no = ?').get(orderNo)
+    if (existing) {
+      db.prepare(`UPDATE orders SET
+        customer_id=?, amount=?, paid_amount=?, discount=?, source=?, status=?, product_name=?, remark=?
+        WHERE id=?`).run(
+        customer ? customer.id : null, amount, paidAmount, discount,
+        'channels_shop', newStatus, productName,
+        body.remark || (customer ? null : `未匹配客户，phone=${phoneRaw || '-'}(${phoneNorm || '-'})，openid=${body.openid || '-'}，name=${body.customer_name || body.receiver_name || '-'}`),
+        existing.id
+      )
+      return { id: existing.id, updated: true }
+    }
+    const row = db.prepare(`INSERT INTO orders
+      (order_no,customer_id,amount,paid_amount,discount,coupon_code,source,status,product_name,remark,order_at,paid_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      orderNo, customer ? customer.id : null, amount, paidAmount, discount,
+      body.coupon_code || null, 'channels_shop', newStatus, productName,
+      body.remark || (customer ? null : `未匹配客户，phone=${phoneRaw || '-'}(${phoneNorm || '-'})，openid=${body.openid || '-'}，name=${body.customer_name || body.receiver_name || '-'}`),
+      body.create_time || body.order_at || now(),
+      (newStatus !== 'pending' ? (body.create_time || body.order_at || now()) : null)
+    )
+    return { id: Number(row.lastInsertRowid), updated: false }
+  })
+
+  const r = upsert()
+
+  if (customer) {
+    db.prepare(`UPDATE customers SET
+      spend = (SELECT COALESCE(SUM(paid_amount),0) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded')),
+      orders = (SELECT COUNT(*) FROM orders WHERE orders.customer_id = customers.id AND orders.status NOT IN ('cancelled','refunded'))
+      WHERE id = ?`).run(customer.id)
+  }
+
+  return { ok: true, order_id: r.id, matched: !!customer, customer_id: customer?.id || null, updated: r.updated }
+}
+
+router.post('/webhook/channels-shop', (req, res) => {
+  // 从 wecom_config 读视频号小店加密配置
+  const cfg = db.prepare('SELECT * FROM wecom_config WHERE id = 1').get() || {}
+  const token = cfg.video_shop_token
+  const aesKey = cfg.video_shop_encoding_aes_key
+  const appid = cfg.video_shop_appid
+
+  const body = req.body || {}
+  const wxSignature = req.headers['x-wx-signature'] || req.headers['x-wechat-signature'] || body.MsgSignature || body.msg_signature
+
+  let parsed = body
+  let decryptedAppid = null
+
+  // === 分支 A: 微信加密回调 ===
+  if (body.Encrypt && wxSignature) {
+    if (!token || !aesKey) {
+      console.warn('[webhook/channels-shop] 收到加密回调但未配置 video_shop_token / video_shop_encoding_aes_key，尝试裸 JSON 回退')
+    } else {
+      const ts = req.headers['x-wx-timestamp'] || req.headers['x-wechat-timestamp'] || body.Timestamp || String(Math.floor(Date.now() / 1000))
+      const nonce = req.headers['x-wx-nonce'] || req.headers['x-wechat-nonce'] || body.Nonce || String(Math.floor(Math.random() * 1e9))
+      const encrypt = body.Encrypt
+
+      if (!verifyWxSignature(token, ts, nonce, wxSignature, encrypt)) {
+        console.warn('[webhook/channels-shop] 签名校验失败', { token_mask: token?.slice(0, 4) + '***', ts, nonce })
+        return res.status(401).json({ error: '微信签名校验失败' })
+      }
+      try {
+        const { msg, appid: gotAppid } = decryptWxEncrypt(encrypt, aesKey)
+        parsed = JSON.parse(msg)
+        decryptedAppid = gotAppid
+        if (appid && gotAppid && appid !== gotAppid) {
+          console.warn('[webhook/channels-shop] AppID 不匹配', { configured: appid, received: gotAppid })
+        }
+      } catch (e) {
+        console.error('[webhook/channels-shop] Encrypt 解密失败:', e.message)
+        return res.status(400).json({ error: 'Encrypt 解密失败: ' + e.message })
+      }
+    }
+  }
+
+  // === 分支 B: 裸 JSON —— parsed 直接就是 body ===
+
+  const result = handleShopOrder(parsed)
+  if (!result.ok) {
+    return res.status(result.status || 400).json({ error: result.error })
+  }
+
+  // 企业微信 / 视频号小店有些回调要求返回 success 或特定 XML 表示收到
+  res.json({ errcode: 0, errmsg: 'success', ...result, _decrypted_appid: decryptedAppid ? decryptedAppid.replace(/[ -]+$/, '') : null })
+})
+
+// GET 用于微信后台的"服务器配置验证"URL
+router.get('/webhook/channels-shop', (req, res) => {
+  const cfg = db.prepare('SELECT * FROM wecom_config WHERE id = 1').get() || {}
+  const token = cfg.video_shop_token
+  const { msg_signature, timestamp, nonce, echostr } = req.query
+  if (token && msg_signature && echostr && verifyWxSignature(token, timestamp, nonce, msg_signature)) {
+    if (cfg.video_shop_encoding_aes_key) {
+      try {
+        const { msg } = decryptWxEncrypt(String(echostr), cfg.video_shop_encoding_aes_key)
+        return res.type('text/plain').send(msg)
+      } catch (e) {
+        return res.status(400).send('echostr 解密失败')
+      }
+    }
+    return res.type('text/plain').send(String(echostr))
+  }
+  res.status(200).send('ok')
+})
+
+export default router

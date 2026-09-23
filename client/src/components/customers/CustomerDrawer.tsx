@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api'
-import type { BizMode, Customer, FollowUp, Tag } from '../../types'
+import type { BizMode, Customer, FollowUp, Order, Tag } from '../../types'
 import { FOLLOWUP_TYPES, MODE_META, STAGE_META_BY_MODE } from '../../types'
 import { formatDateTime, formatMoney, healthColor } from '../../utils'
 import Avatar from '../ui/Avatar'
@@ -32,6 +32,7 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
   const { showToast } = useToast()
   const [customer, setCustomer] = useState<Customer | null>(null)
   const [followUps, setFollowUps] = useState<FollowUp[]>([])
+  const [orders, setOrders] = useState<Order[]>([])
   const [tagLibrary, setTagLibrary] = useState<Tag[]>([])
   const [editOpen, setEditOpen] = useState(false)
   const [addTagOpen, setAddTagOpen] = useState(false)
@@ -44,9 +45,10 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
   const fetchDetail = useCallback(
     async (id: number) => {
       try {
-        const [c, fs] = await Promise.all([api.getCustomer(id), api.getFollowUps(id)])
+        const [c, fs, os] = await Promise.all([api.getCustomer(id), api.getFollowUps(id), api.getCustomerOrders(id).catch(() => [])])
         setCustomer(c)
         setFollowUps(fs)
+        setOrders(os)
       } catch (e) {
         showToast((e as Error).message, 'warning')
       }
@@ -58,6 +60,7 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
     if (customerId === null) {
       setCustomer(null)
       setFollowUps([])
+      setOrders([])
       setEditOpen(false)
       setAddTagOpen(false)
       setCustomTag('')
@@ -176,6 +179,16 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
           detail: f.outcome ?? '',
           source: FOLLOWUP_TYPES[f.type].label,
           color: TYPE_DOTS[f.type]
+        })),
+        ...orders.map((o) => ({
+          time: o.order_at,
+          title: `${o.source_label || o.source} · ${o.product_name || '商品订单'}`,
+          detail: `¥${o.paid_amount.toFixed(2)} · ${o.status_label || o.status} · 单号 ${o.order_no}${o.discount > 0 ? ' · 优惠 ¥' + o.discount.toFixed(2) : ''}${o.coupon_code ? ' · 券码 ' + o.coupon_code : ''}`,
+          source: '订单',
+          color: 'bg-amber-500',
+          icon: 'fa-solid fa-cart-shopping',
+          amount: o.paid_amount,
+          status_color: o.status_color
         }))
       ].sort((a, b) => parseTs(b.time) - parseTs(a.time))
     : []
@@ -438,8 +451,23 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
                 {timeline.map((e, i) => (
                   <div key={i} className="relative">
                     <div className={`absolute -left-6 top-1 w-2.5 h-2.5 rounded-full ${e.color} ring-4 ring-white`} />
-                    <div className="text-xs font-semibold text-slate-800 line-clamp-1">{e.title}</div>
-                    {e.detail && <div className="text-[11px] text-slate-500 mt-0.5">{e.detail}</div>}
+                    <div className="text-xs font-semibold text-slate-800 line-clamp-1 flex items-center gap-1.5">
+                      {e.icon && <i className={`${e.icon} text-[10px] text-amber-600`} />}
+                      <span>{e.title}</span>
+                      {e.amount !== undefined && (
+                        <span className="ml-auto text-[11px] font-bold text-rose-600 shrink-0">¥{e.amount.toFixed(2)}</span>
+                      )}
+                    </div>
+                    {e.detail && (
+                      <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                        <span>{e.detail}</span>
+                        {e.status_color && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${e.status_color}`}>
+                            {e.detail.split('·').slice(0, 0).join()}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     <div className="text-[10px] text-slate-400 mt-1">
                       {formatDateTime(e.time)} · {e.source}
                     </div>

@@ -73,7 +73,19 @@ router.put('/config', (req, res) => {
   const b = req.body || {}
   getConfig()
   const val = (v) => (v === undefined || v === null || String(v).trim() === '') ? null : String(v).trim()
-  db.prepare('UPDATE wecom_config SET corp_id = ?, corp_secret = ?, callback_token = ?, encoding_aes_key = ? WHERE id = 1').run(val(b.corp_id), val(b.corp_secret), val(b.callback_token), val(b.encoding_aes_key))
+  // msg_audit_enabled: 0 / 1 整数开关；msg_audit_agent_id / private_key 由用户填写；last_msgid/status 等运行时字段不允许用户写
+  const enabled = (b.msg_audit_enabled === 1 || b.msg_audit_enabled === '1' || b.msg_audit_enabled === true) ? 1 : 0
+  db.prepare(`UPDATE wecom_config SET
+    corp_id = ?, corp_secret = ?, callback_token = ?, encoding_aes_key = ?,
+    video_shop_appid = ?, video_shop_secret = ?, video_shop_token = ?, video_shop_encoding_aes_key = ?,
+    ext_api_key = ?,
+    msg_audit_agent_id = ?, msg_audit_private_key = ?, msg_audit_enabled = ?
+  WHERE id = 1`).run(
+    val(b.corp_id), val(b.corp_secret), val(b.callback_token), val(b.encoding_aes_key),
+    val(b.video_shop_appid), val(b.video_shop_secret), val(b.video_shop_token), val(b.video_shop_encoding_aes_key),
+    val(b.ext_api_key),
+    val(b.msg_audit_agent_id) || '1000002', val(b.msg_audit_private_key), enabled
+  )
   res.json(getConfig())
 })
 

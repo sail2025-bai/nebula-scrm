@@ -43,3 +43,7 @@ Thumbs.db
 .cache/
 .parcel-cache/
 .vite/
+
+# Tool cache / uploads
+.trae-html-share-packages/
+.uploads/

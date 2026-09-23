@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { BizMode } from '../../types'
 
 interface HeaderProps {
   title: string
@@ -8,6 +9,8 @@ interface HeaderProps {
   onMenuClick: () => void
   userName?: string
   onLogout?: () => void
+  mode?: BizMode
+  onModeChange?: (mode: BizMode) => void
 }
 
 export default function Header({
@@ -17,7 +20,9 @@ export default function Header({
   onNewBroadcast,
   onMenuClick,
   userName,
-  onLogout
+  onLogout,
+  mode,
+  onModeChange
 }: HeaderProps) {
   const [value, setValue] = useState(searchValue)
 
@@ -35,6 +40,35 @@ export default function Header({
         >
           <i className="fa-solid fa-bars text-sm" />
         </button>
+
+        {/* 桌面端 B/C 图标切换（与 Sidebar 左上角同步） */}
+        {mode && onModeChange && (
+          <div className="hidden md:flex items-center gap-1 bg-slate-100 rounded-lg p-0.5 shrink-0">
+            <button
+              title="B端·线索与大客户"
+              onClick={() => mode !== 'service' && onModeChange('service')}
+              className={`w-8 h-8 rounded-md flex items-center justify-center transition ${
+                mode === 'service'
+                  ? 'bg-white shadow-sm text-emerald-600'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <i className="fa-solid fa-briefcase text-xs" />
+            </button>
+            <button
+              title="C端·消费与会员零售"
+              onClick={() => mode !== 'retail' && onModeChange('retail')}
+              className={`w-8 h-8 rounded-md flex items-center justify-center transition ${
+                mode === 'retail'
+                  ? 'bg-white shadow-sm text-emerald-600'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <i className="fa-solid fa-cart-shopping text-xs" />
+            </button>
+          </div>
+        )}
+
         <span className="font-bold text-base md:text-lg text-slate-800 truncate">{title}</span>
         <span className="hidden lg:inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" />

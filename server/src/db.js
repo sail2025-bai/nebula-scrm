@@ -267,8 +267,151 @@ function initSchema() {
   try { db.prepare('ALTER TABLE coupon_redemptions ADD COLUMN redemption_channel TEXT').run() } catch {}
   // wecom_config 补 ext_api_key（第三方对接 API Key）
   try { db.prepare('ALTER TABLE wecom_config ADD COLUMN ext_api_key TEXT').run() } catch {}
+  // 视频号小店订单回调加密配置（与企业微信回调独立）
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN video_shop_appid TEXT').run() } catch {}
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN video_shop_secret TEXT').run() } catch {}
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN video_shop_token TEXT').run() } catch {}
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN video_shop_encoding_aes_key TEXT').run() } catch {}
   // tags 表补 expires_at（自动过期标签）
   try { db.prepare('ALTER TABLE tags ADD COLUMN expires_at DATETIME').run() } catch {}
+  // === 企微会话内容存档（群聊消息数统计）===
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN msg_audit_agent_id TEXT DEFAULT "1000002"').run() } catch {}
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN msg_audit_private_key TEXT').run() } catch {}
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN msg_audit_enabled INTEGER DEFAULT 0').run() } catch {}
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN msg_audit_last_msgid TEXT').run() } catch {}
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN msg_audit_last_polled_at TEXT').run() } catch {}
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN msg_audit_status TEXT').run() } catch {}
+
+  // msg_audit_state：游标存储（不同 agent 隔离）
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS msg_audit_state (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT UNIQUE NOT NULL,
+      last_msgid TEXT,
+      last_polled_at TEXT,
+      total_messages INTEGER DEFAULT 0,
+      error_msg TEXT,
+      last_error_at TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`).run() } catch {}
+
+  // chat_messages：会话解密后的消息（用于群今日消息数聚合）
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      msg_id TEXT UNIQUE NOT NULL,
+      agent_id TEXT,
+      seq INTEGER,
+      chat_id TEXT,
+      chat_name TEXT,
+      sender_userid TEXT,
+      sender_name TEXT,
+      msg_type TEXT,
+      content TEXT,
+      media_url TEXT,
+      ts TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (chat_id) REFERENCES wechat_groups(wecom_chat_id) ON DELETE SET NULL
+  )`).run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_chat_messages_chat ON chat_messages(chat_id)').run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_chat_messages_ts ON chat_messages(ts DESC)').run() } catch {}
+
+  // === 完整订单台账（orders）===
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_no TEXT UNIQUE NOT NULL,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      staff_id INTEGER REFERENCES staff(id),
+      amount REAL NOT NULL,
+      paid_amount REAL NOT NULL DEFAULT 0,
+      discount REAL DEFAULT 0,
+      coupon_code TEXT,
+      source TEXT DEFAULT 'manual',              -- manual / seckill / coupon / channels_shop / 有赞 / 微盟 / 企微小店 / sop
+      status TEXT NOT NULL DEFAULT 'paid',       -- pending / paid / shipped / completed / cancelled / refunded
+      product_name TEXT,
+      product_image TEXT,
+      remark TEXT,
+      order_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      paid_at DATETIME,
+      shipped_at DATETIME,
+      completed_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`).run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id DESC)').run() } catch {}
+  // 迁移：orders.customer_id 允许 NULL（匹配不到客户时 webhook 可以落库）
+  try {
+    const cols = db.prepare('PRAGMA table_info(orders)').all()
+    const customerCol = cols.find(c => c.name === 'customer_id')
+    if (customerCol && customerCol.notnull === 1) {
+      db.exec(`
+        CREATE TABLE _orders_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          order_no TEXT UNIQUE NOT NULL,
+          customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+          staff_id INTEGER REFERENCES staff(id),
+          amount REAL NOT NULL,
+          paid_amount REAL NOT NULL DEFAULT 0,
+          discount REAL DEFAULT 0,
+          coupon_code TEXT,
+          source TEXT DEFAULT 'manual',
+          status TEXT NOT NULL DEFAULT 'paid',
+          product_name TEXT,
+          product_image TEXT,
+          remark TEXT,
+          order_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          paid_at DATETIME,
+          shipped_at DATETIME,
+          completed_at DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO _orders_new SELECT * FROM orders;
+        DROP TABLE orders;
+        ALTER TABLE _orders_new RENAME TO orders;
+        CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id DESC);
+        CREATE INDEX IF NOT EXISTS idx_orders_order_at ON orders(order_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+      `)
+    }
+  } catch (_e) {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_orders_order_at ON orders(order_at DESC)').run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)').run() } catch {}
+
+  // orders 表补 product_image 迁移（容错，列已存在则忽略）
+  try { db.prepare('ALTER TABLE orders ADD COLUMN product_image TEXT').run() } catch {}
+  try { db.prepare('ALTER TABLE orders ADD COLUMN product_name TEXT').run() } catch {}
+
+  // === 首次启动时 seed 示例订单 ===
+  const orderCount = db.prepare('SELECT COUNT(*) AS n FROM orders').get().n
+  if (orderCount === 0) {
+    const seedOrders = [
+      { customer_id: 1, order_no: 'TM20260923001', amount: 199.9, paid_amount: 179.9, discount: 20, coupon_code: 'CP9F3K2026', source: 'coupon', status: 'completed', product_name: '美诺精华液 30ml', product_image: 'https://img.icons8.com/color/96/makeup-bag.png', days_ago: 1 },
+      { customer_id: 1, order_no: 'SK20260922008', amount: 599.0, paid_amount: 599.0, discount: 0, coupon_code: null, source: 'seckill', status: 'shipped', product_name: '小棕瓶精华 50ml 限时秒杀', product_image: 'https://img.icons8.com/color/96/perfume.png', days_ago: 2 },
+      { customer_id: 1, order_no: 'TM20260915023', amount: 88.0, paid_amount: 68.0, discount: 20, coupon_code: 'CPABCD1234', source: 'coupon', status: 'completed', product_name: '洁面乳 120g', product_image: 'https://img.icons8.com/color/96/soap.png', days_ago: 9 },
+      { customer_id: 2, order_no: 'TM20260920015', amount: 1299.0, paid_amount: 1199.0, discount: 100, coupon_code: null, source: 'channels_shop', status: 'paid', product_name: '护肤全套礼盒', product_image: 'https://img.icons8.com/color/96/gift.png', days_ago: 4 },
+      { customer_id: 3, order_no: 'SK20260921011', amount: 99.0, paid_amount: 99.0, discount: 0, coupon_code: null, source: 'seckill', status: 'completed', product_name: '口红 正红色 限时秒杀', product_image: 'https://img.icons8.com/color/96/lipstick.png', days_ago: 3 },
+      { customer_id: 4, order_no: 'TM20260918033', amount: 399.0, paid_amount: 399.0, discount: 0, coupon_code: null, source: 'manual', status: 'completed', product_name: '身体乳 400ml', product_image: 'https://img.icons8.com/color/96/lotion.png', days_ago: 6 },
+      { customer_id: 1, order_no: 'PO20260923002', amount: 4999.0, paid_amount: 4999.0, discount: 0, coupon_code: null, source: 'channels_shop', status: 'paid', product_name: '年度私域会员', product_image: 'https://img.icons8.com/color/96/vip.png', days_ago: 0 },
+      { customer_id: 2, order_no: 'CH20260922005', amount: 680.0, paid_amount: 680.0, discount: 0, coupon_code: null, source: 'seckill', status: 'shipped', product_name: '男士洁面套装', product_image: 'https://img.icons8.com/color/96/shaving.png', days_ago: 2 },
+      // B 端大客户示例
+      { customer_id: 7, order_no: 'B2B20260912001', amount: 128000.0, paid_amount: 64000.0, discount: 0, coupon_code: null, source: 'manual', status: 'paid', product_name: '企业数字化咨询方案（首期款 50%）', product_image: 'https://img.icons8.com/color/96/briefcase.png', days_ago: 11 },
+      { customer_id: 8, order_no: 'B2B20260918003', amount: 58000.0, paid_amount: 58000.0, discount: 2000, coupon_code: null, source: 'manual', status: 'completed', product_name: '行业白皮书定制报告', product_image: 'https://img.icons8.com/color/96/document.png', days_ago: 6 },
+    ]
+    const nowMs = Date.now()
+    const ins = db.prepare(`INSERT OR IGNORE INTO orders
+      (order_no,customer_id,staff_id,amount,paid_amount,discount,coupon_code,source,status,product_name,product_image,order_at,paid_at,shipped_at,completed_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    for (const o of seedOrders) {
+      const orderAt = fmt(new Date(nowMs - o.days_ago * 86400000 - Math.floor(Math.random() * 86400000)))
+      const paidAt = orderAt
+      const shippedAt = o.status === 'shipped' || o.status === 'completed' ? fmt(new Date(nowMs - o.days_ago * 86400000 + 86400000)) : null
+      const completedAt = o.status === 'completed' ? fmt(new Date(nowMs - o.days_ago * 86400000 + 3 * 86400000)) : null
+      ins.run(o.order_no, o.customer_id, null, o.amount, o.paid_amount, o.discount, o.coupon_code, o.source, o.status, o.product_name, o.product_image, orderAt, paidAt, shippedAt, completedAt)
+    }
+    // 同步 customers.spend/orders（只对零售客户累加）
+    db.prepare(`UPDATE customers SET
+      spend = (SELECT COALESCE(SUM(paid_amount),0) FROM orders WHERE orders.customer_id = customers.id),
+      orders = (SELECT COUNT(*) FROM orders WHERE orders.customer_id = customers.id)
+    `).run()
+  }
 }
 
 function pad(n) {
@@ -322,3 +465,6 @@ export function buildSegmentWhere(cond) {
 }
 
 export { db, initSchema }
+
+  // customers 补 ext_openid（视频号 openid 匹配用）
+  try { db.prepare('ALTER TABLE customers ADD COLUMN ext_openid TEXT').run() } catch {}
