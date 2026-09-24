@@ -287,6 +287,9 @@ function initSchema() {
   try { db.prepare('ALTER TABLE wecom_config ADD COLUMN wecom_webhook_ips TEXT').run() } catch {}
   try { db.prepare('ALTER TABLE wecom_config ADD COLUMN video_shop_webhook_ips TEXT').run() } catch {}
 
+  // === SOP 自定义条件引擎（可视化配置，不再手写 SQL）===
+  try { db.prepare('ALTER TABLE sops ADD COLUMN conditions TEXT').run() } catch {}
+
   // P1-8: 废弃 wecom_config 上的 msg_audit runtime 字段（last_msgid / last_polled_at / status），
   // 游标统一走 msg_audit_state 表。SQLite 不支持 DROP COLUMN，走 rebuild。
   try {

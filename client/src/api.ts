@@ -29,7 +29,9 @@ import type {
   Order,
   OrderStatus,
   MsgAuditStatus,
-  CustomerTimelineEntry
+  CustomerTimelineEntry,
+  ConditionField,
+  ConditionOperator
 } from './types'
 
 // === JWT 令牌管理 ===
@@ -199,6 +201,7 @@ export const api = {
   previewSopCustomers: (id: number) =>
     request<{ total: number; customers: { id: number; name: string; stage: string; spend: number; orders: number; channel: string }[] }>(`/sops/${id}/customers`),
   getSopRuns: (limit = 30) => request<SopRun[]>(`/sops/runs/all${toQuery({ limit })}`),
+  getSopConditionMeta: () => request<{ fields: ConditionField[]; operators: Record<string, ConditionOperator[]> }>('/sops/meta/conditions'),
 
   getStaff: () => request<Staff[]>('/staff'),
   getChannels: (mode: BizMode) => request<string[]>(`/channels${toQuery({ mode })}`),

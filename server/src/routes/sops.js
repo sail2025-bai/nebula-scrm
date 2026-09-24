@@ -1,5 +1,6 @@
 import express from 'express'
 import { db, initSchema, now, daysSince } from '../db.js'
+import { validateConditions, conditionsToHuman, CONDITION_FIELDS, CONDITION_OPERATORS } from '../utils/sop-conditions.js'
 
 // 确保 schema 已补齐（新库无 ALTER，老库有 ALTER）
 initSchema()
@@ -69,6 +70,8 @@ function validateSopDSL(body) {
 
 function serializeSop(row) {
   if (!row) return row
+  let conditions = null
+  try { conditions = row.conditions ? JSON.parse(row.conditions) : null } catch {}
   return {
     id: row.id,
     name: row.name,
@@ -78,6 +81,8 @@ function serializeSop(row) {
     trigger_min_spend: row.trigger_min_spend || 0,
     trigger_channel: row.trigger_channel || null,
     steps: parseSteps(row.steps),
+    conditions,                              // ← 可视化条件（null 表示无条件）
+    conditions_human: conditions ? conditionsToHuman(conditions) : null,  // ← 人类可读描述
     run_count: row.run_count || 0,
     conversion: row.conversion || 0,
     active: row.active ? 1 : 0,
@@ -93,6 +98,10 @@ router.get('/', (req, res) => {
     ? db.prepare('SELECT * FROM sops WHERE mode = ? ORDER BY id').all(mode)
     : db.prepare(sql).all()
   res.json(rows.map(serializeSop))
+})
+
+router.get('/meta/conditions', (req, res) => {
+  res.json({ fields: CONDITION_FIELDS, operators: CONDITION_OPERATORS })
 })
 
 router.get('/:id', (req, res) => {
@@ -121,13 +130,21 @@ router.post('/', (req, res) => {
   const triggerDays = triggerType === 'days_inactive' ? Math.max(1, Number(raw.trigger_days) || 30) : 0
   const triggerMinSpend = triggerType === 'high_value' ? Math.max(0, Number(raw.trigger_min_spend) || 500) : 0
 
+  // 自定义条件校验
+  let conditionsJson = null
+  if (b.conditions && typeof b.conditions === 'object') {
+    const condErrors = validateConditions(b.conditions)
+    if (condErrors.length) return res.status(400).json({ error: '条件校验失败：' + condErrors.join('；') })
+    conditionsJson = JSON.stringify(b.conditions)
+  }
+
   try {
     const r = db.prepare(
-      `INSERT INTO sops (name, trigger_desc, trigger_type, trigger_days, trigger_min_spend, trigger_channel, steps, run_count, conversion, active, mode, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)`
+      `INSERT INTO sops (name, trigger_desc, trigger_type, trigger_days, trigger_min_spend, trigger_channel, steps, conditions, run_count, conversion, active, mode, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)`
     ).run(
       name, triggerDesc, triggerType, triggerDays, triggerMinSpend,
-      raw.trigger_channel || null, JSON.stringify(steps), mode, now()
+      raw.trigger_channel || null, JSON.stringify(steps), conditionsJson, mode, now()
     )
     const row = db.prepare('SELECT * FROM sops WHERE id = ?').get(Number(r.lastInsertRowid))
     res.status(201).json(serializeSop(row))
@@ -156,6 +173,16 @@ router.put('/:id', (req, res) => {
   }
   if (Array.isArray(b.steps)) { sets.push('steps = ?'); params.push(JSON.stringify(b.steps)) }
   if (b.active !== undefined) { sets.push('active = ?'); params.push(b.active ? 1 : 0) }
+  // conditions 更新（允许传 null 清空）
+  if (b.conditions !== undefined) {
+    if (b.conditions && typeof b.conditions === 'object') {
+      const condErrors = validateConditions(b.conditions)
+      if (condErrors.length) return res.status(400).json({ error: '条件校验失败：' + condErrors.join('；') })
+      sets.push('conditions = ?'); params.push(JSON.stringify(b.conditions))
+    } else {
+      sets.push('conditions = NULL');
+    }
+  }
   if (!sets.length) return res.status(400).json({ error: '没有可更新的字段' })
   params.push(id)
   db.prepare(`UPDATE sops SET ${sets.join(', ')} WHERE id = ?`).run(...params)
@@ -185,11 +212,11 @@ router.post('/:id/clone', (req, res) => {
   if (!row) return res.status(404).json({ error: 'SOP 不存在' })
   try {
     const r = db.prepare(
-      `INSERT INTO sops (name, trigger_desc, trigger_type, trigger_days, trigger_min_spend, trigger_channel, steps, run_count, conversion, active, mode, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)`
+      `INSERT INTO sops (name, trigger_desc, trigger_type, trigger_days, trigger_min_spend, trigger_channel, steps, conditions, run_count, conversion, active, mode, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)`
     ).run(
       row.name + '（克隆）', row.trigger_desc, row.trigger_type, row.trigger_days, row.trigger_min_spend,
-      row.trigger_channel, row.steps, row.mode, now()
+      row.trigger_channel, row.steps, row.conditions, row.mode, now()
     )
     const cloned = db.prepare('SELECT * FROM sops WHERE id = ?').get(Number(r.lastInsertRowid))
     res.status(201).json(serializeSop(cloned))

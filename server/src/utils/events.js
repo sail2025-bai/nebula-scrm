@@ -1,5 +1,6 @@
 import { db, now, fmt } from '../db.js'
 import { runSopForCustomer } from './sop-engine.js'
+import { matchConditions } from './sop-conditions.js'
 
 /**
  * utils/events.js — 轻量事件总线
@@ -172,6 +173,12 @@ function runMatchingSOPs(e) {
     const sopList = db.prepare(sql).all(...params)
     for (const sop of sopList) {
       try {
+        // 条件过滤（所有 trigger_type 都支持额外条件，custom 类型尤其依赖）
+        const conds = tryParse(sop.conditions)
+        if (conds && Array.isArray(conds.rules) && conds.rules.length > 0) {
+          const hit = matchConditions(conds, e.customer_id, { type: e.type, payload: e.payload })
+          if (!hit) continue
+        }
         runSopForCustomer(sop, e.customer_id, `event:${e.type}`, e)
         executed++
       } catch (err) {

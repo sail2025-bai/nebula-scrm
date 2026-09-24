@@ -264,11 +264,39 @@ export interface Sop {
   trigger_min_spend: number
   trigger_channel: string | null
   steps: SopStep[]
+  conditions: SopConditions | null
+  conditions_human: string | null
   run_count: number
   conversion: number
   active: number
   mode: BizMode
   created_at: string | null
+}
+
+// === SOP 条件引擎（嵌套 AND/OR，可序列化 JSON）===
+export interface SopConditionLeaf {
+  field: string
+  op: string
+  value: string | number | (string | number)[]
+}
+
+export interface SopConditions {
+  op: 'AND' | 'OR'
+  rules: (SopConditions | SopConditionLeaf)[]
+}
+
+export interface ConditionField {
+  value: string
+  label: string
+  type: 'number' | 'enum' | 'string'
+  units?: string
+  hint?: string
+  options?: { value: string; label: string }[]
+}
+
+export interface ConditionOperator {
+  value: string
+  label: string
 }
 
 export interface SopStep {

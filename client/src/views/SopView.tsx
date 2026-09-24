@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import { MODE_META, type BizMode, type Sop, type SopStep, type Coupon, type SopRun } from '../types'
+import { MODE_META, type BizMode, type Sop, type SopStep, type Coupon, type SopRun, type SopConditions, type ConditionField, type ConditionOperator } from '../types'
 import { useToast } from '../components/ui/Toast'
 import Empty from '../components/ui/Empty'
 import Modal from '../components/ui/Modal'
+import ConditionBuilder from '../components/sop/ConditionBuilder'
 
 // === DSL 契约（与后端 sops.js 保持完全一致）===
 const TRIGGER_OPTIONS: { value: string; label: string; icon: string; desc: string; needsDays?: boolean; needsMinSpend?: boolean }[] = [
@@ -44,6 +45,39 @@ function conversionLabel(name: string): string {
   return '转化率'
 }
 
+// 前端本地的条件→人类可读文案（编辑时实时预览用；保存后以后端 conditions_human 为准）
+function conditionsToHuman(
+  root: SopConditions | null | undefined,
+  fields: ConditionField[],
+  operators: Record<string, ConditionOperator[]>
+): string | null {
+  if (!root || !Array.isArray(root.rules) || root.rules.length === 0) return null
+  const leafToText = (leaf: { field: string; op: string; value: unknown }): string => {
+    const f = fields.find(x => x.value === leaf.field)
+    const opLabel = operators[f?.type || 'string']?.find(o => o.value === leaf.op)?.label || leaf.op
+    let v: unknown = leaf.value
+    if (Array.isArray(v)) {
+      const opts = f?.options || []
+      v = v.map(x => opts.find(o => o.value === String(x))?.label ?? x).join(' 或 ')
+    } else if (typeof v === 'string' && f?.options) {
+      v = f.options.find(o => o.value === v)?.label || v
+    }
+    const unit = f?.units ? ` ${f.units}` : ''
+    return `${f?.label || leaf.field} ${opLabel} ${v}${unit}`
+  }
+  const walk = (node: SopConditions, depth = 0): string => {
+    const sep = node.op?.toUpperCase() === 'OR' ? ' 或者 ' : ' 并且 '
+    const parts = node.rules.map(r =>
+      Array.isArray((r as SopConditions).rules)
+        ? walk(r as SopConditions, depth + 1)
+        : leafToText(r as { field: string; op: string; value: unknown })
+    )
+    const text = parts.join(sep)
+    return depth > 0 ? `(${text})` : text
+  }
+  return walk(root)
+}
+
 function ToggleSwitch({ active, onToggle }: { active: boolean; onToggle: () => void }) {
   return (
     <button onClick={onToggle} className={`w-10 h-5 rounded-full relative transition-colors shrink-0 ${active ? 'bg-emerald-500' : 'bg-slate-300'}`}>
@@ -62,6 +96,7 @@ interface SopFormState {
   trigger_channel: string
   mode: BizMode
   steps: SopStep[]
+  conditions: SopConditions | null
 }
 
 const emptyForm: SopFormState = {
@@ -72,7 +107,8 @@ const emptyForm: SopFormState = {
   trigger_min_spend: 500,
   trigger_channel: '',
   mode: 'retail',
-  steps: [{ phase: '步骤1 · 立即', title: '', detail: '', metric: '待配置', action: 'send_wechat', delay_days: 0 }]
+  steps: [{ phase: '步骤1 · 立即', title: '', detail: '', metric: '待配置', action: 'send_wechat', delay_days: 0 }],
+  conditions: null
 }
 
 export default function SopView({ mode }: { mode: BizMode }) {
@@ -99,6 +135,13 @@ export default function SopView({ mode }: { mode: BizMode }) {
   const [runsOpen, setRunsOpen] = useState(false)
   const [sopRuns, setSopRuns] = useState<SopRun[]>([])
   const [runsLoading, setRunsLoading] = useState(false)
+
+  // 条件构建器元数据
+  const [condFields, setCondFields] = useState<ConditionField[]>([])
+  const [condOperators, setCondOperators] = useState<Record<string, ConditionOperator[]>>({})
+  useEffect(() => {
+    api.getSopConditionMeta().then(m => { setCondFields(m.fields); setCondOperators(m.operators) }).catch(() => {})
+  }, [])
 
   const load = useCallback(() => {
     api.getSops(mode).then(setSops).catch(() => {})
@@ -132,7 +175,8 @@ export default function SopView({ mode }: { mode: BizMode }) {
       trigger_min_spend: sop.trigger_min_spend || 500,
       trigger_channel: sop.trigger_channel || '',
       mode: sop.mode || mode,
-      steps: sop.steps.length ? sop.steps : [{ phase: '步骤1 · 立即', title: '', detail: '', metric: '待配置', action: 'send_wechat', delay_days: 0 }]
+      steps: sop.steps.length ? sop.steps : [{ phase: '步骤1 · 立即', title: '', detail: '', metric: '待配置', action: 'send_wechat', delay_days: 0 }],
+      conditions: sop.conditions || null
     })
     setPreviewCustomers([])
     setPreviewTotal(0)
@@ -163,7 +207,8 @@ export default function SopView({ mode }: { mode: BizMode }) {
         trigger_min_spend: f.trigger_min_spend,
         trigger_channel: f.trigger_channel?.trim() || undefined,
         mode: f.mode,
-        steps: validSteps
+        steps: validSteps,
+        conditions: f.conditions || null
       }
       const updated = f.id
         ? await api.updateSop(f.id, payload)
@@ -393,6 +438,34 @@ export default function SopView({ mode }: { mode: BizMode }) {
                 <div className="text-[10px] text-slate-500">{conversionLabel(detail.name)}</div>
               </div>
             </div>
+
+            {/* 规则生效说明（自动生成） */}
+            <div className="p-3 bg-gradient-to-r from-emerald-50 to-blue-50 border border-emerald-200 rounded-lg">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 mb-1.5">
+                <i className="fa-solid fa-wand-magic-sparkles" />
+                <span>规则生效说明</span>
+                <span className="text-[10px] text-slate-400 font-normal">（系统根据配置自动生成）</span>
+              </div>
+              <div className="text-xs text-slate-700 leading-relaxed space-y-1">
+                <div>
+                  <span className="text-slate-500">触发事件：</span>
+                  <span className="font-semibold">{TRIGGER_OPTIONS.find(t => t.value === detail.trigger_type)?.label || detail.trigger_type}</span>
+                </div>
+                {detail.conditions_human && (
+                  <div>
+                    <span className="text-slate-500">且满足条件：</span>
+                    <span className="font-semibold text-emerald-700">{detail.conditions_human}</span>
+                  </div>
+                )}
+                {!detail.conditions_human && (
+                  <div>
+                    <span className="text-slate-500">额外条件：</span>
+                    <span className="text-slate-400">（无 — 对所有命中触发事件的客户生效）</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
             {detail.steps.map((step, i) => (
               <div key={i} className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
                 <div className="flex items-center justify-between mb-2">
@@ -489,6 +562,31 @@ export default function SopView({ mode }: { mode: BizMode }) {
               <i className="fa-solid fa-circle-info mr-1" />
               匹配后端 DSL 引擎后可预估覆盖人数；保存后可在详情页点击「手动执行」真实下发给匹配客户并生成跟进记录。
             </div>
+
+            {/* 可视化条件构建器（所有 SOP 都支持额外条件；custom 类型尤其依赖） */}
+            {condFields.length > 0 && condOperators && (
+              <div className="p-4 bg-gradient-to-br from-slate-50 to-emerald-50/30 border border-slate-200 rounded-xl">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                      <i className="fa-solid fa-filter text-emerald-500" />
+                      可选：客户画像/行为精确匹配条件
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">
+                      留空表示在触发事件发生时对所有客户生效；配置后仅命中条件的客户会被执行 SOP
+                      {editing.trigger_type === 'custom' && <span className="text-amber-600 font-medium">（自定义 SOP 建议必须配置）</span>}
+                    </div>
+                  </div>
+                </div>
+                <ConditionBuilder
+                  value={editing.conditions}
+                  onChange={(c) => setEditing({ ...editing, conditions: c })}
+                  fields={condFields}
+                  operators={condOperators}
+                  humanText={conditionsToHuman(editing.conditions, condFields, condOperators)}
+                />
+              </div>
+            )}
 
             {/* 步骤编辑器 */}
             <div>
