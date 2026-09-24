@@ -308,6 +308,9 @@ export interface SopStep {
   delay_days?: number
   coupon_id?: number
   tag_name?: string
+  staff_id?: number | null
+  group_id?: number | null
+  message_template?: string
 }
 
 export interface SopRun {

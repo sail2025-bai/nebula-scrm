@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import { MODE_META, type BizMode, type Sop, type SopStep, type Coupon, type SopRun, type SopConditions, type ConditionField, type ConditionOperator, type Tag } from '../types'
+import { MODE_META, type BizMode, type Sop, type SopStep, type Coupon, type SopRun, type SopConditions, type ConditionField, type ConditionOperator, type Tag, type Staff, type WechatGroup } from '../types'
 import { useToast } from '../components/ui/Toast'
 import Empty from '../components/ui/Empty'
 import Modal from '../components/ui/Modal'
@@ -130,6 +130,10 @@ export default function SopView({ mode }: { mode: BizMode }) {
   useEffect(() => { api.getCoupons(mode).then(setCoupons).catch(() => {}) }, [mode])
   const [tags, setTags] = useState<Tag[]>([])
   useEffect(() => { api.getTags(mode).then(setTags).catch(() => {}) }, [mode])
+  const [staffList, setStaffList] = useState<Staff[]>([])
+  useEffect(() => { api.getStaff().then(setStaffList).catch(() => {}) }, [])
+  const [groupList, setGroupList] = useState<WechatGroup[]>([])
+  useEffect(() => { api.getGroups(mode).then(setGroupList).catch(() => {}) }, [mode])
   const [runningSop, setRunningSop] = useState<Sop | null>(null)
   const [runBusy, setRunBusy] = useState(false)
 
@@ -659,6 +663,53 @@ export default function SopView({ mode }: { mode: BizMode }) {
                           {!step.tag_name && (
                             <p className="text-[10px] text-amber-500 mt-1">⚠️ 未指定标签名，后端会自动按步骤标题生成一个兜底标签</p>
                           )}
+                        </div>
+                      )}
+                      {step.action === 'assign_staff' && (
+                        <div className="col-span-2">
+                          <label className="block text-[11px] text-slate-500 mb-1">
+                            分配顾问 <span className="text-emerald-500">（指定顾问，不选则后端随机分配）</span>
+                          </label>
+                          <select
+                            value={step.staff_id ?? ''}
+                            onChange={e => updateStep(idx, { staff_id: e.target.value ? Number(e.target.value) : null })}
+                            className={inputCls}
+                          >
+                            <option value="">— 自动分配（取首位顾问）—</option>
+                            {staffList.map(s => (
+                              <option key={s.id} value={s.id}>#{s.id} {s.name} · {s.role || ''}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      {step.action === 'invite_group' && (
+                        <div className="col-span-2">
+                          <label className="block text-[11px] text-slate-500 mb-1">
+                            拉入社群 <span className="text-emerald-500">（指定目标群，不选则写 intent 由顾问手动操作）</span>
+                          </label>
+                          <select
+                            value={step.group_id ?? ''}
+                            onChange={e => updateStep(idx, { group_id: e.target.value ? Number(e.target.value) : null })}
+                            className={inputCls}
+                          >
+                            <option value="">— 不指定（降级为 intent）—</option>
+                            {groupList.map(g => (
+                              <option key={g.id} value={g.id}>#{g.id} {g.name} · {g.member_count || 0}人</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      {step.action === 'send_wechat' && (
+                        <div className="col-span-2">
+                          <label className="block text-[11px] text-slate-500 mb-1">
+                            企微消息模板（可选，用于统一话术）
+                          </label>
+                          <input
+                            placeholder="留空则用步骤 detail 作为发送文案"
+                            value={step.message_template || ''}
+                            onChange={e => updateStep(idx, { message_template: e.target.value })}
+                            className={inputCls}
+                          />
                         </div>
                       )}
                     </div>

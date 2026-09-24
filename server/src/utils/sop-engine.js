@@ -106,8 +106,14 @@ function executeStep(step, sop, customerId, ctx = {}) {
     }
 
     case 'assign_staff': {
-      // 选一个活跃顾问（取任意 1 个）
-      const staff = db.prepare('SELECT id, name FROM staff LIMIT 1').get()
+      // 优先用 step.staff_id 指定的顾问，否则取首位
+      let staff = null
+      if (step.staff_id) {
+        staff = db.prepare('SELECT id, name FROM staff WHERE id = ?').get(step.staff_id)
+      }
+      if (!staff) {
+        staff = db.prepare('SELECT id, name FROM staff LIMIT 1').get()
+      }
       if (staff) {
         db.prepare('UPDATE customers SET staff_id = ?, updated_at = ? WHERE id = ?').run(staff.id, now(), customerId)
         db.prepare(
@@ -121,27 +127,52 @@ function executeStep(step, sop, customerId, ctx = {}) {
       break
     }
 
+    case 'invite_group': {
+      const groupInfo = step.group_id
+        ? db.prepare('SELECT id, name FROM wechat_groups WHERE id = ?').get(step.group_id)
+        : null
+      db.prepare(
+        `INSERT INTO wecom_events (event_type, change_type, payload, created_at)
+         VALUES ('sop_step_intent', 'invite_group', ?, ?)`
+      ).run(JSON.stringify({
+        sop_id: sop.id, step_index: ctx.stepIndex, step_title: step.title,
+        customer_id: customerId, group_id: step.group_id || null,
+        group_name: groupInfo?.name || null,
+        source: ctx.source || 'sop-engine'
+      }), now())
+      const customer = db.prepare('SELECT staff_id FROM customers WHERE id = ?').get(customerId)
+      const targetStaff = customer?.staff_id ? Number(customer.staff_id) : null
+      const groupLabel = groupInfo ? `【${groupInfo.name}】` : ''
+      db.prepare(
+        `INSERT INTO follow_ups (customer_id, staff_id, type, content, outcome, created_at)
+         VALUES (?, ?, 'sop_invite_group', ?, '待处理', ?)`
+      ).run(customerId, targetStaff,
+        `[SOP·${sop.name}] 待拉群${groupLabel}：${step.title || step.detail || ''}`, now())
+      logs.push({ kind: 'intent_logged', target: 'invite_group', group_id: step.group_id })
+      break
+    }
+
     case 'send_wechat':
     case 'send_sms':
     case 'phone_call':
-    case 'invite_group':
     case 'gift_send': {
-      // 真实发送需配置企微/短信/群 API，先降级为 wecom_events intent 日志 + follow_up 提醒顾问
+      const templateUsed = stepType === 'send_wechat' && step.message_template
       db.prepare(
         `INSERT INTO wecom_events (event_type, change_type, payload, created_at)
          VALUES ('sop_step_intent', ?, ?, ?)`
       ).run(stepType, JSON.stringify({
         sop_id: sop.id, step_index: ctx.stepIndex, step_title: step.title,
-        customer_id: customerId, source: ctx.source || 'sop-engine'
+        customer_id: customerId, source: ctx.source || 'sop-engine',
+        template: templateUsed ? step.message_template : null
       }), now())
-      // 给 customers.staff_id 对应的顾问（或 sop 作者）写一条 follow_up 提醒
       const customer = db.prepare('SELECT staff_id FROM customers WHERE id = ?').get(customerId)
       const targetStaff = customer?.staff_id ? Number(customer.staff_id) : null
+      const msgLabel = templateUsed ? `（模板）` : ''
       db.prepare(
         `INSERT INTO follow_ups (customer_id, staff_id, type, content, outcome, created_at)
          VALUES (?, ?, ?, ?, '待处理', ?)`
       ).run(customerId, targetStaff, `sop_${stepType}`,
-        `[SOP·${sop.name}] 待执行 ${ACTION_LABEL[stepType] || stepType}：${step.title || step.detail || ''}`,
+        `[SOP·${sop.name}] 待执行 ${ACTION_LABEL[stepType] || stepType}${msgLabel}：${step.title || step.detail || ''}`,
         now())
       logs.push({ kind: 'intent_logged', target: stepType })
       break

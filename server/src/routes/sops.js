@@ -101,7 +101,26 @@ router.get('/', (req, res) => {
 })
 
 router.get('/meta/conditions', (req, res) => {
-  res.json({ fields: CONDITION_FIELDS, operators: CONDITION_OPERATORS })
+  // 动态把 tags 表的数据注入到 CONDITION_FIELDS 的 tags 字段 options 里
+  let tagsList = []
+  try {
+    tagsList = db.prepare('SELECT DISTINCT name FROM tags ORDER BY name').all().map(r => r.name)
+  } catch (_) { /* tags 表不存在时忽略 */ }
+
+  const fields = CONDITION_FIELDS.map(f => {
+    if (f.value === 'tags') {
+      // 把 tags 从 string 升级成 enum，带所有已存在标签作选项
+      return {
+        ...f,
+        type: 'enum',
+        hint: null,
+        options: tagsList.map(n => ({ value: n, label: n }))
+      }
+    }
+    return { ...f }
+  })
+
+  res.json({ fields, operators: CONDITION_OPERATORS })
 })
 
 router.get('/:id', (req, res) => {
