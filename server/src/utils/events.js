@@ -1,4 +1,5 @@
 import { db, now, fmt } from '../db.js'
+import { runSopForCustomer } from './sop-engine.js'
 
 /**
  * utils/events.js — 轻量事件总线
@@ -49,7 +50,7 @@ const SOP_TRIGGER_TO_EVENT = {
   high_value: 'high_value',
   chat_join: 'chat_join',
   churn_warning: 'churn_warning',
-  custom: null                         // 自定义 SOP 不自动匹配，手动触发
+  custom: null                         // custom 匹配任意事件（见 runMatchingSOPs）
 }
 
 const sqlInsertEvent = `INSERT INTO events (type, customer_id, staff_id, payload) VALUES (?, ?, ?, ?)`
@@ -125,111 +126,86 @@ export function processPendingEvents(batchSize = 50) {
   return { processed: events.length, sopRuns, errors, autoStaged }
 }
 
+/** 解析 event payload 中的 spend（high_value 阈值校验用） */
+function extractSpendFromPayload(e) {
+  try {
+    const p = e.payload ? JSON.parse(e.payload) : null
+    return Number(p?.spend ?? p?.amount ?? 0) || 0
+  } catch { return 0 }
+}
+
 /** 对一条 event 找所有触发条件满足的 active SOP → 执行 steps */
 function runMatchingSOPs(e) {
-  // days_inactive / churn_warning 的 SOP 主要靠 scheduler 直扫，这里只处理事件驱动的几种
-  const eventToSop = SOP_TRIGGER_TO_EVENT
-  let triggerType = null
-  for (const [sopType, evt] of Object.entries(eventToSop)) {
-    if (evt === e.type) { triggerType = sopType; break }
+  if (!e.customer_id) return 0   // 没有客户 ID 的事件不触发 SOP
+
+  // 1. 先按事件类型映射找 trigger_type
+  let matchedTriggerTypes = []
+  for (const [sopType, evt] of Object.entries(SOP_TRIGGER_TO_EVENT)) {
+    if (evt === e.type) matchedTriggerTypes.push(sopType)
   }
-  if (!triggerType) return 0
 
-  const sql = `
-    SELECT * FROM sops
-    WHERE active = 1 AND trigger_type = ?
-      AND (trigger_days IS NULL OR trigger_days = 0 OR ? >= trigger_days * 24)
-      AND (trigger_channel IS NULL OR trigger_channel = ?)
-    ORDER BY id ASC
-  `
-  // 延时窗口：order_paid → first_purchase 需要 trigger_days（小时级）
-  const hoursSinceCreated = e.created_at ? (Date.now() - new Date(e.created_at + 'Z').getTime()) / 3600000 : 0
+  // 2. custom 类型：任何事件都可匹配（custom 是最灵活的"手动/任意事件触发"型 SOP）
+  matchedTriggerTypes.push('custom')
+
+  const hoursSinceCreated = e.created_at
+    ? (Date.now() - new Date(e.created_at + 'Z').getTime()) / 3600000
+    : 0
   const channel = extractChannelFromPayload(e)
-
-  const matched = db.prepare(sql).all(triggerType, Math.floor(hoursSinceCreated), channel)
-  if (!matched.length) return 0
+  const spend = extractSpendFromPayload(e)
 
   let executed = 0
-  for (const sop of matched) {
-    try {
-      runOneSOP(sop, e)
-      executed++
-    } catch (err) {
-      console.error(`[events] SOP #${sop.id} 执行失败: ${err.message}`)
+  for (const triggerType of matchedTriggerTypes) {
+    let sql = `
+      SELECT * FROM sops
+      WHERE active = 1 AND trigger_type = ?
+        AND (trigger_days IS NULL OR trigger_days = 0 OR ? >= trigger_days * 24)
+        AND (trigger_channel IS NULL OR trigger_channel = ?)
+    `
+    const params = [triggerType, Math.floor(hoursSinceCreated), channel]
+
+    // high_value: 必须 event payload 里 spend >= sop.trigger_min_spend
+    if (triggerType === 'high_value') {
+      sql += ` AND (trigger_min_spend IS NULL OR trigger_min_spend <= ?)`
+      params.push(spend)
+    }
+
+    const sopList = db.prepare(sql).all(...params)
+    for (const sop of sopList) {
+      try {
+        runSopForCustomer(sop, e.customer_id, `event:${e.type}`, e)
+        executed++
+      } catch (err) {
+        console.error(`[events] SOP #${sop.id} 执行失败: ${err.message}`)
+      }
     }
   }
   return executed
 }
 
-/** SOP 执行核心（从 scheduler.js 的 runSOP 复用，这里用单个 event → 单个 customer_id 精准跑） */
-function runOneSOP(sop, e) {
-  if (!e.customer_id) return
-  const steps = JSON.parse(sop.steps || '[]')
-  let couponIssued = 0
-  let tagApplied = 0
-
-  for (const step of steps) {
-    const stepType = step.action || step.type
-    if (stepType === 'push_coupon' && step.coupon_id) {
-      const code = Math.random().toString(36).slice(2, 10).toUpperCase()
-      db.prepare(`INSERT INTO coupon_issues (coupon_id,customer_id,source,sop_id,sop_step_index,code,status)
-        VALUES (?,?,?,?,?,?, 'pending')`).run(step.coupon_id, e.customer_id, `sop:event:${e.type}`, sop.id, steps.indexOf(step), code)
-      couponIssued++
-    } else if (stepType === 'note_mark' && step.tag_name) {
-      let tag = db.prepare('SELECT id FROM tags WHERE name = ?').get(step.tag_name)
-      if (!tag) {
-        const expires = fmt(new Date(Date.now() + 30 * 24 * 3600 * 1000))
-        const r = db.prepare('INSERT INTO tags (name, category, mode, expires_at) VALUES (?, "事件触发", ?, ?)').run(step.tag_name, sop.mode || 'retail', expires)
-        tag = { id: Number(r.lastInsertRowid) }
-      }
-      db.prepare('INSERT OR IGNORE INTO customer_tags (customer_id, tag_id) VALUES (?, ?)').run(e.customer_id, tag.id)
-      tagApplied++
-    }
-    // send_wechat / send_sms / phone_call / invite_group / assign_staff / gift_send —— 先跳过真实发送（未配置），
-    // 打 wecom_events 日志让运营看到"本来应该发"
-    if (['send_wechat', 'send_sms', 'phone_call', 'invite_group', 'assign_staff', 'gift_send'].includes(stepType)) {
-      db.prepare(`INSERT INTO wecom_events (event_type, change_type, payload, handled) VALUES (?, ?, ?, 0)`).run(
-        'sop_step_intent', stepType,
-        JSON.stringify({ sop_id: sop.id, step_title: step.title, customer_id: e.customer_id, event_id: e.id }),
-        0
-      )
-    }
-  }
-
-  const r = db.prepare(`INSERT INTO sop_runs (sop_id, triggered_by, target_count, success_count, outcome, created_at)
-    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`).run(
-    sop.id, `event:${e.type}`, 1, 1,
-    JSON.stringify({ couponIssued, tagApplied })
-  )
-  db.prepare('UPDATE sops SET run_count = run_count + 1 WHERE id = ?').run(sop.id)
-}
-
 /** delayed SOP：事件 created_at + trigger_days 已到期但之前没跑过的 */
 function runDelayedSOPs() {
-  const SOP_TYPES_WITH_DELAY = ['first_purchase', 'days_inactive', 'chat_join']
+  const SOP_TYPES_WITH_DELAY = ['first_purchase', 'days_inactive', 'chat_join', 'custom']
   for (const triggerType of SOP_TYPES_WITH_DELAY) {
+    const eventType = SOP_TRIGGER_TO_EVENT[triggerType] || 'customer_stage_changed'
     const delayedSops = db.prepare(`
       SELECT s.*, e.id AS event_id, e.customer_id AS customer_id
       FROM sops s
-      JOIN events e ON e.type = CASE ?
-        WHEN 'first_purchase' THEN 'order_paid'
-        WHEN 'days_inactive' THEN 'churn_warning'
-        WHEN 'chat_join' THEN 'chat_join'
-        ELSE s.trigger_type END
+      JOIN events e ON e.type = ?
       WHERE s.active = 1 AND s.trigger_type = ?
         AND s.trigger_days > 0
         AND e.status = 'done'
         AND datetime(e.created_at, '+' || s.trigger_days || ' days') < datetime('now')
-        AND e.created_at >= datetime('now', '-7 days')
-    `).all(triggerType, triggerType)
+        AND e.created_at >= datetime('now', '-30 days')
+    `).all(eventType, triggerType)
 
-    // 避免重复：看 sop_runs 里是否已有同 sop+customer 的 event 来源
     for (const d of delayedSops) {
       const already = db.prepare(`
-        SELECT id FROM sop_runs WHERE sop_id = ? AND triggered_by LIKE ? AND triggered_by LIKE ? LIMIT 1
-      `).get(d.id, `%event:%`, `%event_id=${d.event_id}%`)
+        SELECT id FROM sop_runs WHERE sop_id = ? AND triggered_by LIKE ? LIMIT 1
+      `).get(d.id, `%event_id=${d.event_id}%`)
       if (already) continue
-      try { runOneSOP(d, { ...d, id: d.event_id, type: SOP_TRIGGER_TO_EVENT[triggerType] }) } catch { /* 吞 */ }
+      try {
+        runSopForCustomer(d, d.customer_id, `event:${eventType}:delay`, { id: d.event_id, type: eventType })
+      } catch { /* 吞 */ }
     }
   }
 }

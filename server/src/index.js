@@ -130,6 +130,16 @@ app.use('/api', openapiRouter)
 //    StreamableHTTP + SSE 双协议，支持豆包/火山方舟/Dify 远程调用
 app.use('/api/mcp', mcpRouter)
 
+// --- 前端生产构建静态托管（单进程一体化，必须在 requireAuth 之前）---
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const CLIENT_DIST = path.resolve(__dirname, '../../client/dist')
+app.use(express.static(CLIENT_DIST))
+app.get(/^(?!\/api\/).*/, (req, res) => {
+  res.sendFile(path.join(CLIENT_DIST, 'index.html'))
+})
+
 // ⑥ JWT 鉴权关口 —— 之后所有路由必须 Bearer token
 app.use(requireAuth)
 
@@ -153,17 +163,6 @@ app.use('/api/reports', reportsRouter)
 
 // --- C3: 内部 Token 管理（走 JWT 鉴权，必须在 requireAuth 之后）---
 app.use('/api/auth', tokenRouter)
-
-// --- 前端生产构建静态托管（单进程一体化）---
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const CLIENT_DIST = path.resolve(__dirname, '../../client/dist')
-app.use(express.static(CLIENT_DIST))
-app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api/')) return next()
-  res.sendFile(path.join(CLIENT_DIST, 'index.html'))
-})
 
 // --- 404（必须在所有路由之后，error handler 之前）---
 app.use((req, res) => {

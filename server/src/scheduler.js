@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { processPendingEvents, rescanAllCustomerStages } from './utils/events.js'
 import { runOnce as runChatConsumer } from './utils/chat-consumer.js'
 import { runDailyReport } from './utils/daily-report.js'
+import { runSopBatch } from './utils/sop-engine.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -212,27 +213,35 @@ export async function expireOldCoupons() {
   return { couponsExpired: cExpired.length, couponsSoldOut: soldOut.length, issues: iExpired.n }
 }
 
-// === 功能：执行 days_inactive 类型 SOP ===
+// === 功能：执行 days_inactive 类型 SOP（带 24h dedup，避免和 events churn_warning 重复）===
 export async function runInactiveCustomerSOPs() {
   const activeSOPs = db.prepare(`SELECT * FROM sops WHERE active = 1 AND trigger_type = 'days_inactive'`).all()
   if (!activeSOPs.length) return { sop: 0, customers: 0 }
   let totalCustomers = 0
   for (const sop of activeSOPs) {
     const days = Number(sop.trigger_days) || 30
-    const cutoffDate = new Date(Date.now() - days * 24 * 3600 * 1000)
-    const cutoffStr = cutoffDate.toISOString().replace('T', ' ').slice(0, 19)
+    const cutoffStr = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString().replace('T', ' ').slice(0, 19)
     const params = [cutoffStr]
     let sql = `SELECT id FROM customers WHERE (last_active IS NULL OR last_active < ?) AND stage != 'churned'`
-    if (sop.trigger_channel) {
-      sql += ` AND channel = ?`
-      params.push(sop.trigger_channel)
-    }
+    if (sop.trigger_channel) { sql += ` AND channel = ?`; params.push(sop.trigger_channel) }
     const customers = db.prepare(sql).all(...params)
     if (!customers.length) continue
-    const targetIds = customers.map(c => c.id)
-    const result = await runSOP(sop, targetIds, 'scheduler:inactive')
-    totalCustomers += result.success_count
-    log('scheduler', 'info', `[SOP] ${sop.name} 匹配 ${targetIds.length} 客户，成功执行 ${result.success_count}`)
+
+    // dedup：过滤掉过去 24h 已跑过此 SOP 的客户
+    const targetIds = []
+    for (const c of customers) {
+      const ran = db.prepare(
+        `SELECT 1 FROM sop_runs WHERE sop_id = ? AND triggered_by != '手动触发'
+         AND created_at > datetime('now', '-24 hours')
+         AND (outcome LIKE ? OR target_count = 1) LIMIT 1`
+      ).get(sop.id, `%${c.id}%`)
+      if (!ran) targetIds.push(c.id)
+    }
+    if (!targetIds.length) continue
+
+    const result = await runSopBatch(sop, targetIds, 'scheduler:inactive')
+    totalCustomers += result.success
+    log('scheduler', 'info', `[SOP] ${sop.name} 匹配 ${targetIds.length} 客户，成功 ${result.success}（券 ${result.couponIssued} 标签 ${result.tagApplied} intent ${result.intentLogged}）`)
   }
   return { sop: activeSOPs.length, customers: totalCustomers }
 }
@@ -249,50 +258,6 @@ export async function cleanExpiredTags() {
   const delTag = db.prepare(`DELETE FROM tags WHERE id IN (${ph})`).run(...tagIds)
   log('scheduler', 'info', `[标签清理] 删除 ${delTag.changes} 个过期标签，解除 ${delRel.changes} 个客户关联: ${expiredTags.map(t => t.name).join(', ')}`)
   return { cleaned: delTag.changes, relations: delRel.changes }
-}
-
-// SOP 执行核心（push_coupon / add_tag）
-async function runSOP(sop, customerIds, triggeredBy) {
-  const steps = JSON.parse(sop.steps || '[]')
-  let success = 0
-  let couponIssued = 0
-  let tagApplied = 0
-
-  for (const cid of customerIds) {
-    try {
-      for (const step of steps) {
-        const stepType = step.type || step.action
-        if (stepType === 'push_coupon' && step.coupon_id) {
-          const code = Math.random().toString(36).slice(2, 10).toUpperCase()
-          db.prepare(`INSERT INTO coupon_issues (coupon_id,customer_id,source,sop_id,sop_step_index,code,status)
-            VALUES (?,?,?,?,?,?, 'pending')`).run(
-            step.coupon_id, cid, `sop:${sop.id}`, sop.id, steps.indexOf(step), code
-          )
-          couponIssued++
-        } else if (stepType === 'add_tag' && step.tag_name) {
-          // SOP 自动打的 tag 默认 30 天过期
-          const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().replace('T', ' ').slice(0, 19)
-          let tag = db.prepare('SELECT id FROM tags WHERE name = ?').get(step.tag_name)
-          if (!tag) {
-            const r = db.prepare('INSERT INTO tags (name, category, mode, expires_at) VALUES (?, "SOP自动", ?, ?)').run(step.tag_name, sop.mode || 'retail', expires)
-            tag = { id: Number(r.lastInsertRowid) }
-          }
-          db.prepare('INSERT OR IGNORE INTO customer_tags (customer_id, tag_id) VALUES (?, ?)').run(cid, tag.id)
-          tagApplied++
-        }
-      }
-      success++
-    } catch (e) {
-      log('scheduler', 'warn', `[SOP] 客户 #${cid} 执行失败: ${e.message}`)
-    }
-  }
-  const r = db.prepare(`INSERT INTO sop_runs (sop_id, triggered_by, target_count, success_count, outcome, created_at)
-    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`).run(
-    sop.id, triggeredBy, customerIds.length, success,
-    JSON.stringify({ couponIssued, tagApplied })
-  )
-  db.prepare('UPDATE sops SET run_count = run_count + 1 WHERE id = ?').run(sop.id)
-  return { run_id: r.lastInsertRowid, success_count: success, couponIssued, tagApplied }
 }
 
 /**
