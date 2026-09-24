@@ -124,11 +124,17 @@ export default function DashboardView({ onNavigate, onOpenCustomer, dataVersion,
     loadTrend(days)
   }, [loadTrend, days, mode])
 
-  const handleAssign = (id: number, name: string) => {
-    setStats(prev =>
-      prev ? { ...prev, pendingTasks: prev.pendingTasks.map(t => (t.id === id ? { ...t, done: true } : t)) } : prev
-    )
-    showToast(`「${name}」已一键指派至对应导购企微端`, 'success')
+  const handleComplete = async (id: string | number, name: string) => {
+    const numId = Number(String(id).replace(/^fu_/, ''))
+    try {
+      await api.completeFollowUp(numId, '顾问已完成')
+      setStats(prev =>
+        prev ? { ...prev, pendingTasks: prev.pendingTasks.map(t => (t.id === id ? { ...t, done: true } : t)) } : prev
+      )
+      showToast(`「${name.slice(0, 20)}」已标记完成`, 'success')
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : '标记失败', 'warning')
+    }
   }
 
   const chartData: ChartData<'line'> | null = trend
@@ -163,6 +169,7 @@ export default function DashboardView({ onNavigate, onOpenCustomer, dataVersion,
 
   const pending = stats?.pendingTasks ?? []
   const doneCount = pending.filter(t => t.done).length
+  const fu = stats?.followupStats ?? { overdue: 0, todayDue: 0, future: 0 }
   const churnRisks = stats?.churnRisks ?? []
   const channelStats = stats?.channelStats ?? []
   const channelMax = Math.max(...channelStats.map(c => c.count), 1)
@@ -336,44 +343,71 @@ export default function DashboardView({ onNavigate, onOpenCustomer, dataVersion,
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-              <h4 className="font-bold text-slate-900 text-sm">{MODE_META[mode].taskTitle}</h4>
+              <h4 className="font-bold text-slate-900 text-sm">SOP 待跟进提醒</h4>
             </div>
-            <span className="text-xs text-slate-400">
-              待完成 {pending.length - doneCount} / 共 {pending.length} 项
-            </span>
+            <div className="flex items-center gap-2 text-[11px] font-medium">
+              {fu.overdue > 0 && (
+                <span className="px-2 py-0.5 bg-rose-50 text-rose-600 border border-rose-200 rounded">
+                  <i className="fa-solid fa-triangle-exclamation mr-0.5" />逾期 {fu.overdue}
+                </span>
+              )}
+              {fu.todayDue > 0 && (
+                <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded">
+                  <i className="fa-regular fa-clock mr-0.5" />今日 {fu.todayDue}
+                </span>
+              )}
+              {fu.future > 0 && (
+                <span className="px-2 py-0.5 bg-slate-50 text-slate-500 border border-slate-200 rounded">
+                  <i className="fa-regular fa-calendar mr-0.5" />未来 {fu.future}
+                </span>
+              )}
+            </div>
           </div>
           {pending.length ? (
             <div className="space-y-2.5">
               {pending.map(t => {
+                const overdue = !t.done && !!t.overdue
                 const icon = t.done
                   ? { icon: 'fa-solid fa-check', cls: 'bg-slate-200 text-slate-600' }
-                  : t.name.includes('生日')
-                    ? { icon: 'fa-solid fa-cake-candles', cls: 'bg-blue-100 text-blue-700' }
-                    : { icon: 'fa-solid fa-gift', cls: 'bg-emerald-100 text-emerald-700' }
+                  : overdue
+                    ? { icon: 'fa-solid fa-bell', cls: 'bg-rose-100 text-rose-700' }
+                    : { icon: 'fa-solid fa-bolt', cls: 'bg-emerald-100 text-emerald-700' }
                 return (
                   <div
                     key={t.id}
-                    className={`p-3 bg-slate-50 border border-slate-100 rounded-xl flex flex-wrap items-center justify-between gap-2 ${
-                      t.done ? 'opacity-60' : ''
+                    className={`p-3 bg-slate-50 border rounded-xl flex flex-wrap items-center justify-between gap-2 transition ${
+                      overdue
+                        ? 'border-rose-200 bg-rose-50/40'
+                        : t.done
+                          ? 'border-slate-100 opacity-60'
+                          : 'border-slate-100'
                     }`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs ${icon.cls}`}>
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs shrink-0 ${icon.cls}`}>
                         <i className={icon.icon} />
                       </div>
-                      <div>
-                        <div className={`text-xs font-semibold text-slate-900 ${t.done ? 'line-through' : ''}`}>{t.name}</div>
-                        <div className="text-[11px] text-slate-500">{t.target}</div>
+                      <div className="min-w-0">
+                        <div className={`text-xs font-semibold text-slate-900 truncate ${t.done ? 'line-through' : ''}`}>{t.name}</div>
+                        <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                          {overdue && <span className="text-rose-600 font-medium">⚠ 已逾期</span>}
+                          {!overdue && t.dueAt && <span className="text-slate-400">⏰ {t.dueAt}</span>}
+                          <span className="text-slate-400">· {t.target}</span>
+                        </div>
                       </div>
                     </div>
                     {t.done ? (
                       <span className="text-xs text-slate-400 font-medium px-2 py-1 bg-slate-100 rounded">已完成</span>
                     ) : (
                       <button
-                        onClick={() => handleAssign(t.id, t.name)}
-                        className="px-3 py-1 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 active:scale-95 transition"
+                        onClick={() => handleComplete(t.id, t.name)}
+                        className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
+                          overdue
+                            ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        } active:scale-95 shrink-0`}
                       >
-                        一键指派
+                        '标记完成'
                       </button>
                     )}
                   </div>
@@ -384,7 +418,7 @@ export default function DashboardView({ onNavigate, onOpenCustomer, dataVersion,
             <Empty
               icon="fa-regular fa-clipboard-check"
               title="今日运营任务已全部完成"
-              description="导购 SOP 执行情况将实时同步至看板"
+              description="SOP 待办提醒将实时同步至看板"
             />
           )}
         </div>

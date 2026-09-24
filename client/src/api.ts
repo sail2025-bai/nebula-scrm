@@ -180,12 +180,15 @@ export const api = {
   createFollowUp: (payload: { customer_id: number; type: string; content: string; outcome?: string; next_followup_at?: string | null }) =>
     request<FollowUp>('/follow-ups', { method: 'POST', body: JSON.stringify(payload) }),
   deleteFollowUp: (id: number) => request<{ ok: boolean }>(`/follow-ups/${id}`, { method: 'DELETE' }),
+  completeFollowUp: (id: number, outcome?: string) => request<{ ok: boolean }>(`/follow-ups/${id}/complete`, { method: 'POST', body: JSON.stringify({ outcome }) }),
 
   getBroadcasts: (mode: BizMode) => request<Broadcast[]>(`/broadcasts${toQuery({ mode })}`),
   createBroadcast: (payload: { title: string; type: string; audience_desc: string; message: string; mode: BizMode; conditions?: SegmentConditions }) =>
     request<Broadcast>('/broadcasts', { method: 'POST', body: JSON.stringify(payload) }),
 
-  getSops: (mode: BizMode) => request<Sop[]>(`/sops${toQuery({ mode })}`),
+  getSops: (mode: BizMode) => request<{ items: Sop[]; _meta: { is_admin: boolean; me: { id: number; account: string; name: string | null; wecom_userid: string | null } | null } }>(`/sops${toQuery({ mode })}`),
+  getSopTemplates: (mode: BizMode) =>
+    request<{ items: Sop[]; _meta?: { is_admin: boolean; me: { id: number; account: string; name: string | null } | null } }>(`/sops${toQuery({ mode, include_templates: 1 })}`),
   getSop: (id: number) => request<Sop>(`/sops/${id}`),
   createSop: (payload: Partial<Sop> & { name: string; trigger_type: string; steps: SopStep[] }) =>
     request<Sop>('/sops', { method: 'POST', body: JSON.stringify(payload) }),

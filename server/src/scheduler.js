@@ -13,7 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 let timers = []
 
-export function startScheduler() {
+export async function startScheduler() {
   stopScheduler()
 
   log('scheduler', 'info', '=== SCRM 生产化调度器启动 ===')
@@ -27,58 +27,58 @@ export function startScheduler() {
   cleanExpiredTags().catch((e) => log('scheduler', 'error', e.message))
   // 事件总线：启动即扫一次积压 pending
   try {
-    const r = processPendingEvents(100)
+    const r = await processPendingEvents(100)
     if (r.processed) log('scheduler', 'info', `启动事件消费: processed=${r.processed} sopRuns=${r.sopRuns} autoStaged=${r.autoStaged} errors=${r.errors}`)
     else log('scheduler', 'info', '启动事件消费: 无积压 pending')
   } catch (e) { log('scheduler', 'warn', `事件消费初始化跳过: ${e.message}`) }
 
   // A：每 30 分钟同步企微通讯录
-  timers.push(setInterval(() => {
+  timers.push(setInterval(async () => {
     log('scheduler', 'info', '[定时] 30 分钟 → 通讯录自动同步')
     syncStaffWecom().catch((e) => log('scheduler', 'warn', e.message))
   }, 30 * 60 * 1000))
 
   // B：每 5 分钟扫描待下发群发
-  timers.push(setInterval(() => {
+  timers.push(setInterval(async () => {
     scanPendingBroadcasts().catch((e) => log('scheduler', 'error', e.message))
   }, 5 * 60 * 1000))
 
   // C：每 1 分钟检查秒杀过期 / 券过期 / 券发完自动关
-  timers.push(setInterval(() => {
+  timers.push(setInterval(async () => {
     closeExpiredSeckills().catch((e) => log('scheduler', 'error', e.message))
     expireOldCoupons().catch((e) => log('scheduler', 'error', e.message))
   }, 60 * 1000))
 
   // D：每 10 分钟扫描 days_inactive SOP
-  timers.push(setInterval(() => {
+  timers.push(setInterval(async () => {
     runInactiveCustomerSOPs().catch((e) => log('scheduler', 'error', e.message))
   }, 10 * 60 * 1000))
 
   // E：每小时扫一次过期标签（低频，tag 过期一般按天算）
-  timers.push(setInterval(() => {
+  timers.push(setInterval(async () => {
     cleanExpiredTags().catch((e) => log('scheduler', 'error', e.message))
   }, 60 * 60 * 1000))
 
   // F：每 5 分钟尝试拉取会话存档群聊消息（未开通时内部跳过）
-  timers.push(setInterval(() => {
+  timers.push(setInterval(async () => {
     pollMsgAudit().catch((e) => log('scheduler', 'error', `msgaudit poll: ${e.message}`))
   }, 5 * 60 * 1000))
 
   // F2：每 3 分钟消费 chat_messages：关键词打标 + 未回复提醒
-  timers.push(setInterval(() => {
+  timers.push(setInterval(async () => {
     try { runChatConsumer() } catch (e) { log('scheduler', 'error', `[chat-consumer] 异常: ${e.message}`) }
   }, 3 * 60 * 1000))
 
   // G：每 1 分钟扫 events 表（A1 事件总线 → SOP / 客户分级）
-  timers.push(setInterval(() => {
+  timers.push(setInterval(async () => {
     try {
-      const r = processPendingEvents(100)
+      const r = await processPendingEvents(100)
       if (r.processed || r.errors) log('scheduler', 'info', `[事件] processed=${r.processed} sopRuns=${r.sopRuns} autoStaged=${r.autoStaged} errors=${r.errors}`)
     } catch (e) { log('scheduler', 'error', `[事件] 消费异常: ${e.message}`) }
   }, 60 * 1000))
 
   // H：每 6 小时兜底全量客户分级重扫（A3，处理遗漏的 / last_active 自然衰减）
-  timers.push(setInterval(() => {
+  timers.push(setInterval(async () => {
     try {
       const changed = rescanAllCustomerStages()
       if (changed) log('scheduler', 'info', `[客户分级] 全量重扫，${changed} 客户 stage 变更`)
@@ -215,7 +215,8 @@ export async function expireOldCoupons() {
 
 // === 功能：执行 days_inactive 类型 SOP（带 24h dedup，避免和 events churn_warning 重复）===
 export async function runInactiveCustomerSOPs() {
-  const activeSOPs = db.prepare(`SELECT * FROM sops WHERE active = 1 AND trigger_type = 'days_inactive'`).all()
+  // scope=mine 的 SOP 只能由创建者手动 run，后台调度器不带 staff_id 无法定向执行
+  const activeSOPs = db.prepare(`SELECT * FROM sops WHERE active = 1 AND (is_template IS NULL OR is_template = 0) AND trigger_type = 'days_inactive' AND (scope = 'all' OR scope IS NULL)`).all()
   if (!activeSOPs.length) return { sop: 0, customers: 0 }
   let totalCustomers = 0
   for (const sop of activeSOPs) {

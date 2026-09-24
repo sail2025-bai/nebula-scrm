@@ -1,6 +1,7 @@
 import express from 'express'
 import { db, initSchema, now, daysSince } from '../db.js'
 import { validateConditions, conditionsToHuman, CONDITION_FIELDS, CONDITION_OPERATORS } from '../utils/sop-conditions.js'
+import { runSopBatch } from '../utils/sop-engine.js'
 
 // 确保 schema 已补齐（新库无 ALTER，老库有 ALTER）
 initSchema()
@@ -24,7 +25,6 @@ const ACTION_TYPES = new Set([
   'push_coupon',     // 推送优惠券
   'invite_group',    // 拉入群
   'assign_staff',    // 分配顾问
-  'send_sms',        // 短信
   'phone_call',      // 电话
   'gift_send',       // 寄礼
   'note_mark'        // 打标签备注
@@ -72,6 +72,11 @@ function serializeSop(row) {
   if (!row) return row
   let conditions = null
   try { conditions = row.conditions ? JSON.parse(row.conditions) : null } catch {}
+  let created_by_name = null
+  if (row.created_by) {
+    const u = db.prepare('SELECT name FROM users WHERE id = ?').get(row.created_by)
+    if (u) created_by_name = u.name
+  }
   return {
     id: row.id,
     name: row.name,
@@ -81,23 +86,79 @@ function serializeSop(row) {
     trigger_min_spend: row.trigger_min_spend || 0,
     trigger_channel: row.trigger_channel || null,
     steps: parseSteps(row.steps),
-    conditions,                              // ← 可视化条件（null 表示无条件）
-    conditions_human: conditions ? conditionsToHuman(conditions) : null,  // ← 人类可读描述
+    conditions,
+    conditions_human: conditions ? conditionsToHuman(conditions) : null,
     run_count: row.run_count || 0,
     conversion: row.conversion || 0,
     active: row.active ? 1 : 0,
     mode: row.mode || 'retail',
+    scope: row.scope || 'all',        // all=全局对全部客户生效, mine=仅创建者名下客户
+    created_by: row.created_by || null,
+    created_by_name,
+    is_template: row.is_template ? 1 : 0,
     created_at: row.created_at || null
   }
 }
 
+/** 从 req.user 派生 staff.id（后端强约束，不信任前端） */
+function deriveStaffId(user) {
+  if (!user) return null
+  // 优先 wecom_userid 精确匹配
+  if (user.wecomUserid) {
+    const s = db.prepare('SELECT id FROM staff WHERE wecom_userid = ?').get(user.wecomUserid)
+    if (s) return Number(s.id)
+  }
+  if (user.account && user.account.startsWith('SIM_')) {
+    const s = db.prepare('SELECT id FROM staff WHERE wecom_userid = ?').get(user.account)
+    if (s) return Number(s.id)
+  }
+  if (user.id) {
+    const u = db.prepare('SELECT wecom_userid FROM users WHERE id = ?').get(user.id)
+    if (u?.wecom_userid) {
+      const s = db.prepare('SELECT id FROM staff WHERE wecom_userid = ?').get(u.wecom_userid)
+      if (s) return Number(s.id)
+    }
+  }
+  return null
+}
+
+/** admin 判定：users.account='admin'（单一可信源，同时支持 JWT 和 API Token） */
+function isAdmin(user) {
+  if (!user) return false
+  if (user.account === 'admin') return true
+  if (user.id) {
+    const u = db.prepare('SELECT account FROM users WHERE id = ?').get(user.id)
+    if (u?.account === 'admin') return true
+  }
+  return false
+}
+
 router.get('/', (req, res) => {
   const mode = req.query.mode
-  const sql = 'SELECT * FROM sops ORDER BY id'
-  const rows = (mode === 'retail' || mode === 'service')
-    ? db.prepare('SELECT * FROM sops WHERE mode = ? ORDER BY id').all(mode)
-    : db.prepare(sql).all()
-  res.json(rows.map(serializeSop))
+  const includeTemplates = req.query.include_templates === '1'
+  let sql = 'SELECT * FROM sops'
+  const where = []
+  const params = []
+  if (mode === 'retail' || mode === 'service') { where.push('mode = ?'); params.push(mode) }
+  if (!includeTemplates) { where.push('(is_template IS NULL OR is_template = 0)') }
+  if (where.length) sql += ' WHERE ' + where.join(' AND ')
+  sql += ' ORDER BY is_template ASC, run_count DESC, id ASC'
+  const rows = db.prepare(sql).all(...params)
+  const list = rows.map(serializeSop)
+  // 附加 _meta：前端据此决定是否显示 scope 下拉、是否过滤列表
+  const userAcc = req.user?.id ? (db.prepare('SELECT account, name FROM users WHERE id = ?').get(req.user.id)?.account || null) : null
+  res.json({
+    items: list,
+    _meta: {
+      is_admin: isAdmin(req.user),
+      me: req.user ? {
+        id: req.user.id,
+        account: userAcc || req.user.account,
+        name: db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id)?.name || null,
+        wecom_userid: req.user.wecomUserid || null
+      } : null
+    }
+  })
 })
 
 router.get('/meta/conditions', (req, res) => {
@@ -135,7 +196,12 @@ router.get('/:id/customers', (req, res) => {
   const id = Number(req.params.id)
   const row = Number.isInteger(id) ? db.prepare('SELECT * FROM sops WHERE id = ?').get(id) : null
   if (!row) return res.status(404).json({ error: 'SOP 不存在' })
-  const customers = matchSopCustomers(row, 50)
+  let staffId = null
+  if ((row.scope || 'all') === 'mine') {
+    staffId = deriveStaffId(req.user)
+    if (!staffId) return res.status(400).json({ error: '无法识别您名下的客户归属，请先绑定企微账号' })
+  }
+  const customers = matchSopCustomers(row, 50, staffId)
   res.json({ total: customers.length, customers })
 })
 
@@ -143,6 +209,20 @@ router.post('/', (req, res) => {
   const b = req.body || {}
   const { errors, triggerType, steps, name, mode, raw } = validateSopDSL(b)
   if (errors.length) return res.status(400).json({ error: errors.join('；') })
+
+  // === scope 强约束 ===
+  // all = 系统级对全部客户生效（仅 admin 能建）
+  // mine = 仅创建者名下客户（所有登录用户都能建）
+  const admin = isAdmin(req.user)
+  let scope = b.scope === 'mine' ? 'mine' : 'all'
+  if (scope === 'all' && !admin) {
+    // 非 admin 请求 scope=all → 自动降级 mine，不直接拒绝（前端可能传了默认值）
+    scope = 'mine'
+  }
+  if (scope === 'mine' && !admin) {
+    const staffId = deriveStaffId(req.user)
+    if (!staffId) return res.status(400).json({ error: '无法识别您名下的客户归属，请先绑定企微账号' })
+  }
 
   // 自动生成可读 trigger_desc（可被调用方覆盖）
   const triggerDesc = b.trigger_desc?.trim() || buildTriggerDesc(triggerType, raw)
@@ -159,11 +239,12 @@ router.post('/', (req, res) => {
 
   try {
     const r = db.prepare(
-      `INSERT INTO sops (name, trigger_desc, trigger_type, trigger_days, trigger_min_spend, trigger_channel, steps, conditions, run_count, conversion, active, mode, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)`
+      `INSERT INTO sops (name, trigger_desc, trigger_type, trigger_days, trigger_min_spend, trigger_channel, steps, conditions, run_count, conversion, active, mode, created_at, scope, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?, ?, ?)`
     ).run(
       name, triggerDesc, triggerType, triggerDays, triggerMinSpend,
-      raw.trigger_channel || null, JSON.stringify(steps), conditionsJson, mode, now()
+      raw.trigger_channel || null, JSON.stringify(steps), conditionsJson, mode, now(),
+      scope, req.user?.id || null
     )
     const row = db.prepare('SELECT * FROM sops WHERE id = ?').get(Number(r.lastInsertRowid))
     res.status(201).json(serializeSop(row))
@@ -176,6 +257,19 @@ router.put('/:id', (req, res) => {
   const id = Number(req.params.id)
   const row = Number.isInteger(id) ? db.prepare('SELECT * FROM sops WHERE id = ?').get(id) : null
   if (!row) return res.status(404).json({ error: 'SOP 不存在' })
+  if (row.is_template) return res.status(403).json({ error: '系统模板只读，不可编辑。请先克隆到「我的 SOP」再修改。' })
+
+  // === 编辑权限 ===
+  const admin = isAdmin(req.user)
+  // scope=all 的系统级 SOP：仅 admin 能改
+  if ((row.scope || 'all') === 'all' && !admin) {
+    return res.status(403).json({ error: '系统级 SOP（scope=全局）仅管理员可编辑' })
+  }
+  // scope=mine 的私人 SOP：创建者本人可改
+  if ((row.scope || 'all') === 'mine' && row.created_by && row.created_by !== req.user?.id && !admin) {
+    return res.status(403).json({ error: '这是他人创建的私人 SOP，无权限编辑' })
+  }
+
   const b = req.body || {}
 
   // 校验（若传了 trigger_type/steps 则校验）
@@ -189,6 +283,12 @@ router.put('/:id', (req, res) => {
   const params = []
   for (const k of ['name', 'trigger_desc', 'trigger_type', 'trigger_days', 'trigger_min_spend', 'trigger_channel', 'mode']) {
     if (b[k] !== undefined) { sets.push(`${k} = ?`); params.push(b[k]) }
+  }
+  // scope 字段：仅 admin 能改（all↔mine）
+  if (b.scope !== undefined) {
+    if (!admin) return res.status(403).json({ error: 'scope（作用域）仅管理员可修改' })
+    if (b.scope !== 'all' && b.scope !== 'mine') return res.status(400).json({ error: 'scope 必须是 all 或 mine' })
+    sets.push('scope = ?'); params.push(b.scope)
   }
   if (Array.isArray(b.steps)) { sets.push('steps = ?'); params.push(JSON.stringify(b.steps)) }
   if (b.active !== undefined) { sets.push('active = ?'); params.push(b.active ? 1 : 0) }
@@ -213,6 +313,7 @@ router.put('/:id/toggle', (req, res) => {
   const id = Number(req.params.id)
   const row = Number.isInteger(id) ? db.prepare('SELECT * FROM sops WHERE id = ?').get(id) : null
   if (!row) return res.status(404).json({ error: 'SOP不存在' })
+  if (row.is_template) return res.status(403).json({ error: '系统模板只读，不可激活。请先克隆到「我的 SOP」。' })
   const active = row.active ? 0 : 1
   db.prepare('UPDATE sops SET active = ? WHERE id = ?').run(active, id)
   res.json(serializeSop({ ...row, active }))
@@ -220,8 +321,20 @@ router.put('/:id/toggle', (req, res) => {
 
 router.delete('/:id', (req, res) => {
   const id = Number(req.params.id)
-  const r = Number.isInteger(id) ? db.prepare('DELETE FROM sops WHERE id = ?').run(id) : null
-  if (!r || !r.changes) return res.status(404).json({ error: 'SOP 不存在' })
+  const row = Number.isInteger(id) ? db.prepare('SELECT * FROM sops WHERE id = ?').get(id) : null
+  if (!row) return res.status(404).json({ error: 'SOP 不存在' })
+  if (row.is_template) return res.status(403).json({ error: '系统模板不可删除。' })
+
+  // === 删除权限 ===
+  const admin = isAdmin(req.user)
+  if ((row.scope || 'all') === 'all' && !admin) {
+    return res.status(403).json({ error: '系统级 SOP（scope=全局）仅管理员可删除' })
+  }
+  if ((row.scope || 'all') === 'mine' && row.created_by && row.created_by !== req.user?.id && !admin) {
+    return res.status(403).json({ error: '这是他人创建的私人 SOP，无权限删除' })
+  }
+
+  const r = db.prepare('DELETE FROM sops WHERE id = ?').run(id)
   res.json({ ok: true })
 })
 
@@ -229,13 +342,18 @@ router.post('/:id/clone', (req, res) => {
   const id = Number(req.params.id)
   const row = Number.isInteger(id) ? db.prepare('SELECT * FROM sops WHERE id = ?').get(id) : null
   if (!row) return res.status(404).json({ error: 'SOP 不存在' })
+  // 克隆出来的副本：scope 降为 mine（除非 admin），created_by 换成当前用户
+  const admin = isAdmin(req.user)
+  const targetScope = admin ? (row.scope || 'all') : 'mine'
   try {
     const r = db.prepare(
-      `INSERT INTO sops (name, trigger_desc, trigger_type, trigger_days, trigger_min_spend, trigger_channel, steps, conditions, run_count, conversion, active, mode, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)`
+      `INSERT INTO sops (name, trigger_desc, trigger_type, trigger_days, trigger_min_spend, trigger_channel, steps, conditions, run_count, conversion, active, mode, created_at, is_template, scope, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, 0, ?, ?)`
     ).run(
-      row.name + '（克隆）', row.trigger_desc, row.trigger_type, row.trigger_days, row.trigger_min_spend,
-      row.trigger_channel, row.steps, row.conditions, row.mode, now()
+      row.name + (row.is_template ? '' : '（副本）'),
+      row.trigger_desc, row.trigger_type, row.trigger_days, row.trigger_min_spend,
+      row.trigger_channel, row.steps, row.conditions, row.mode, now(),
+      targetScope, req.user?.id || null
     )
     const cloned = db.prepare('SELECT * FROM sops WHERE id = ?').get(Number(r.lastInsertRowid))
     res.status(201).json(serializeSop(cloned))
@@ -244,127 +362,47 @@ router.post('/:id/clone', (req, res) => {
   }
 })
 
-// 手动触发执行 SOP → 匹配客户 → 真发券/写跟进 → 执行日志
-router.post('/:id/run', (req, res) => {
+// 手动触发执行 SOP → 统一走 sop-engine（与事件驱动 / 调度器同一入口，分层逻辑一致）
+router.post('/:id/run', async (req, res) => {
   const id = Number(req.params.id)
   const row = Number.isInteger(id) ? db.prepare('SELECT * FROM sops WHERE id = ?').get(id) : null
   if (!row) return res.status(404).json({ error: 'SOP 不存在' })
+  if (row.is_template) return res.status(403).json({ error: '系统模板不可执行。请先克隆到「我的 SOP」后激活执行。' })
   if (!row.active) return res.status(400).json({ error: 'SOP 未激活，无法执行' })
 
   const b = req.body || {}
   const limit = Math.min(500, Math.max(1, Number(b.limit) || 20))
-  const customers = matchSopCustomers(row, limit)
-  const steps = parseSteps(row.steps)
 
-  // 预加载 push_coupon 用到的券模板，避免事务内反复查
-  const couponIds = steps.filter(s => s.action === 'push_coupon' && s.coupon_id).map(s => Number(s.coupon_id))
-  const couponsMap = {}
-  for (const cid of couponIds) {
-    couponsMap[cid] = db.prepare('SELECT * FROM coupons WHERE id = ?').get(cid)
+  // === scope 过滤：mine 类型 → 只匹配创建者名下客户 ===
+  let staffId = null
+  if ((row.scope || 'all') === 'mine') {
+    staffId = deriveStaffId(req.user)
+    if (!staffId) return res.status(400).json({ error: '无法识别您名下的客户归属，请先绑定企微账号' })
+  }
+  const customers = matchSopCustomers(row, limit, staffId)
+  if (!customers.length) {
+    return res.json({ ok: true, run_id: null, sop_id: id, target_count: 0, success_count: 0, note: staffId ? '您名下暂无可匹配客户' : '无匹配客户' })
   }
 
-  const r = db.prepare(
-    'INSERT INTO sop_runs (sop_id, triggered_by, target_count, created_at) VALUES (?, ?, ?, ?)'
-  ).run(id, b.triggered_by || '手动触发', customers.length, now())
-  const runId = Number(r.lastInsertRowid)
+  const triggeredBy = b.triggered_by || '手动触发'
+  const customerIds = customers.map(c => c.id)
+  const result = await runSopBatch(row, customerIds, triggeredBy)
 
-  let successCount = 0
-  let couponIssuedTotal = 0
-  let couponSkippedTotal = 0
-
-  const insFollowup = db.prepare(
-    `INSERT INTO follow_ups (customer_id, staff_id, type, content, outcome, next_followup_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  )
-  const insIssue = db.prepare(
-    `INSERT INTO coupon_issues (coupon_id,customer_id,source,sop_id,sop_step_index,staff_id,code,expires_at)
-     VALUES (?,?,?,?,?,?,?,?)`
-  )
-  const checkIssue = db.prepare('SELECT 1 FROM coupon_issues WHERE coupon_id=? AND customer_id=?')
-  const updCouponIssued = db.prepare('UPDATE coupons SET issued_count = issued_count + 1 WHERE id=?')
-
-  const updRun = db.prepare(
-    'UPDATE sop_runs SET success_count = ?, outcome = ? WHERE id = ?'
-  )
-  const updRunCount = db.prepare('UPDATE sops SET run_count = run_count + ?, created_at = ? WHERE id = ?')
-
-  const typeMap = {
-    send_wechat: 'wechat',
-    push_coupon: 'wechat',
-    invite_group: 'wechat',
-    assign_staff: 'note',
-    send_sms: 'wechat',
-    phone_call: 'call',
-    gift_send: 'gift',
-    note_mark: 'note'
-  }
-
-  const tx = db.transaction(() => {
-    for (const c of customers) {
-      for (let stepIdx = 0; stepIdx < steps.length; stepIdx++) {
-        const step = steps[stepIdx]
-        const type = typeMap[step.action || 'send_wechat'] || 'wechat'
-        let content = `${row.name} · ${step.phase || ''} ${step.title} ${step.detail || ''}`.trim()
-        let outcome = 'SOP 自动下发'
-
-        // === push_coupon 真发券 ===
-        if (step.action === 'push_coupon' && step.coupon_id) {
-          const couponId = Number(step.coupon_id)
-          const coupon = couponsMap[couponId]
-          if (coupon && coupon.active === 1 && coupon.issued_count < coupon.total_stock) {
-            const dup = checkIssue.get(couponId, c.id)
-            if (!dup) {
-              // 券码
-              const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
-              let code = 'CP'
-              for (let i = 0; i < 10; i++) code += chars[Math.floor(Math.random() * chars.length)]
-              insIssue.run(couponId, c.id, `sop:${id}`, id, stepIdx, c.staff_id, code, coupon.end_at)
-              updCouponIssued.run(couponId)
-              couponIssuedTotal++
-              outcome = `已发券 CP**${code.slice(-4)}`
-              content += ` [券:${coupon.name} 码:${code}]`
-            } else {
-              couponSkippedTotal++
-              outcome = '客户已有该券，跳过'
-            }
-          } else {
-            outcome = coupon ? `券已发完/停用` : `券模板不存在 #${couponId}`
-          }
-        }
-
-        // === gift_send 预留：写业务实体 ===
-        if (step.action === 'gift_send') {
-          outcome = outcome === 'SOP 自动下发' ? '礼品寄送单已生成（待企微对接物流）' : outcome
-        }
-
-        const delayDays = Number(step.delay_days || 0)
-        const nextAt = delayDays > 0
-          ? fmt(new Date(Date.now() + delayDays * 86400000))
-          : null
-        insFollowup.run(c.id, c.staff_id, type, content, outcome, nextAt, now())
-      }
-      successCount++
-    }
-    updRun.run(successCount, JSON.stringify({
-      steps: steps.length,
-      sop: row.name,
-      coupon_issued: couponIssuedTotal,
-      coupon_skipped: couponSkippedTotal
-    }), runId)
-    updRunCount.run(successCount, now(), id)
-  })
-  tx()
+  // sop-engine 内部已写 sop_runs（批量时还会额外写一条聚合记录），拿最新一条给前端
+  const lastRun = db.prepare('SELECT id FROM sop_runs WHERE sop_id = ? ORDER BY id DESC LIMIT 1').get(id)
 
   res.json({
     ok: true,
-    run_id: runId,
+    run_id: lastRun?.id || null,
     sop_id: id,
-    target_count: customers.length,
-    success_count: successCount,
-    steps_per_customer: steps.length,
-    coupon_issued: couponIssuedTotal,
-    coupon_skipped: couponSkippedTotal,
-    triggered_by: b.triggered_by || '手动触发'
+    target_count: result.total,
+    success_count: result.success,
+    coupon_issued: result.couponIssued,
+    staff_assigned: result.staffAssigned,
+    tag_applied: result.tagApplied,
+    intent_logged: result.intentLogged,
+    failed: result.failed.length,
+    triggered_by: triggeredBy
   })
 })
 
@@ -391,7 +429,8 @@ function buildTriggerDesc(triggerType, b) {
 }
 
 // === 辅助：匹配 SOP 触发条件的客户（单一入口，可解释）===
-function matchSopCustomers(sop, limit = 50) {
+// staffId 非 null 时追加 AND customers.staff_id = ?（scope=mine 过滤）
+function matchSopCustomers(sop, limit = 50, staffId = null) {
   const triggerType = sop.trigger_type || 'days_inactive'
   const mode = sop.mode || 'retail'
   const params = [mode]
@@ -399,7 +438,6 @@ function matchSopCustomers(sop, limit = 50) {
 
   switch (triggerType) {
     case 'add_friend': {
-      // 最近 7 天内的新客
       where += " AND stage = ? AND created_at >= datetime('now', '-7 days')"
       params.push('new')
       break
@@ -422,7 +460,6 @@ function matchSopCustomers(sop, limit = 50) {
       break
     }
     case 'chat_join': {
-      // 有关联企微 chat_id 的客户
       where += ' AND wecom_external_userid IS NOT NULL AND wecom_external_userid != ""'
       break
     }
@@ -435,6 +472,11 @@ function matchSopCustomers(sop, limit = 50) {
       // 自定义：默认跑所有客户
       break
     }
+  }
+  // scope=mine → 只取该顾问名下客户
+  if (staffId != null) {
+    where += ' AND staff_id = ?'
+    params.push(staffId)
   }
   params.push(limit)
   return db.prepare(

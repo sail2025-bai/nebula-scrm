@@ -1,4 +1,5 @@
 import { db, now, fmt } from '../db.js'
+import { sendInternalWecomMessage, sendWechatMsgToCustomer, inviteCustomerToGroup } from '../wecom.js'
 
 /**
  * utils/sop-engine.js —— 统一 SOP 执行引擎
@@ -12,7 +13,6 @@ import { db, now, fmt } from '../db.js'
  *   push_coupon     → 发优惠券（需 step.coupon_id）
  *   add_tag / note_mark → 给客户打标签（需 step.tag_name）
  *   send_wechat     → 企微消息（降级：写 wecom_events intent 日志）
- *   send_sms        → 短信（降级：写 intent）
  *   phone_call      → 电话回访（降级：写 intent）
  *   invite_group    → 拉入社群（降级：写 intent）
  *   assign_staff    → 分配顾问（降级：写 intent）
@@ -29,7 +29,6 @@ const ACTION_KEYWORDS = [
   { action: 'assign_staff', kws: ['顾问', '分配', '专家', '客户经理', '专属'] },
   { action: 'phone_call',   kws: ['电话', '回访', '一对一'] },
   { action: 'gift_send',    kws: ['寄礼', '寄送', '试用装', '礼品'] },
-  { action: 'send_sms',    kws: ['短信', 'SMS'] },
   { action: 'note_mark',   kws: ['标签', '备注', '标记'] },
 ]
 
@@ -64,9 +63,14 @@ export function normalizeStep(step, sop) {
 }
 
 // === 2. 执行单个 step ===
-function executeStep(step, sop, customerId, ctx = {}) {
+async function executeStep(step, sop, customerId, ctx = {}) {
   const stepType = step.action || step.type
   const logs = []
+  // 计算"应该什么时候做"：按 step.delay_days 从 SOP 触发时刻推算
+  const delayDays = Number(step.delay_days || 0)
+  const nextAt = delayDays > 0
+    ? fmt(new Date(Date.now() + delayDays * 86400000))
+    : null
 
   switch (stepType) {
     case 'push_coupon': {
@@ -97,9 +101,10 @@ function executeStep(step, sop, customerId, ctx = {}) {
       // note_mark 同时写 follow_up
       if (stepType === 'note_mark') {
         db.prepare(
-          `INSERT INTO follow_ups (customer_id, staff_id, type, content, outcome, created_at)
-           VALUES (?, NULL, 'sop', ?, '自动执行', ?)`
-        ).run(customerId, `[${sop.name}] ${step.title || step.detail || step.tag_name}`, now())
+          `INSERT INTO follow_ups (customer_id, staff_id, type, content, outcome, next_followup_at, created_at)
+           VALUES (?, NULL, 'sop', ?, '自动执行', ?, ?)`
+        ).run(customerId, `[${sop.name}] ${step.title || step.detail || step.tag_name}`, nextAt, now())
+        // note_mark 是自动打标签，没有指定顾问，不推企微
       }
       logs.push({ kind: 'tag_applied', tag_id: tag.id, tag_name: step.tag_name })
       break
@@ -117,9 +122,16 @@ function executeStep(step, sop, customerId, ctx = {}) {
       if (staff) {
         db.prepare('UPDATE customers SET staff_id = ?, updated_at = ? WHERE id = ?').run(staff.id, now(), customerId)
         db.prepare(
-          `INSERT INTO follow_ups (customer_id, staff_id, type, content, outcome, created_at)
-           VALUES (?, ?, 'sop_assign', ?, '自动分配', ?)`
-        ).run(customerId, staff.id, `[${sop.name}] 自动分配顾问 ${staff.name}`, now())
+          `INSERT INTO follow_ups (customer_id, staff_id, type, content, outcome, next_followup_at, created_at)
+           VALUES (?, ?, 'sop_assign', ?, '自动分配', ?, ?)`
+        ).run(customerId, staff.id, `[${sop.name}] 自动分配顾问 ${staff.name}`, nextAt, now())
+        // fire-and-forget 推企微：顾问被自动分到新客户了
+        void sendInternalWecomMessage({
+          staffId: staff.id,
+          content: `系统自动分配了新客户：${customerId}（请登录查看客户详情）`,
+          title: '🔔 SOP 新顾问分配',
+          source: 'sop_engine_assign'
+        }).catch(() => {})
         logs.push({ kind: 'staff_assigned', staff_id: staff.id, staff_name: staff.name })
       } else {
         logs.push({ kind: 'intent_logged', target: 'assign_staff', reason: '无可用顾问' })
@@ -128,52 +140,100 @@ function executeStep(step, sop, customerId, ctx = {}) {
     }
 
     case 'invite_group': {
+      // === 自动执行类：调企微拉群 API，降级则 outcome=降级未发，不进待办 ===
       const groupInfo = step.group_id
-        ? db.prepare('SELECT id, name FROM wechat_groups WHERE id = ?').get(step.group_id)
+        ? db.prepare('SELECT id, name, chat_id FROM groups WHERE id = ?').get(Number(step.group_id))
         : null
-      db.prepare(
-        `INSERT INTO wecom_events (event_type, change_type, payload, created_at)
-         VALUES ('sop_step_intent', 'invite_group', ?, ?)`
-      ).run(JSON.stringify({
-        sop_id: sop.id, step_index: ctx.stepIndex, step_title: step.title,
-        customer_id: customerId, group_id: step.group_id || null,
-        group_name: groupInfo?.name || null,
-        source: ctx.source || 'sop-engine'
-      }), now())
-      const customer = db.prepare('SELECT staff_id FROM customers WHERE id = ?').get(customerId)
-      const targetStaff = customer?.staff_id ? Number(customer.staff_id) : null
+      const customerInfo = db.prepare('SELECT staff_id FROM customers WHERE id = ?').get(customerId)
+      const targetStaff = customerInfo?.staff_id ? Number(customerInfo.staff_id) : null
       const groupLabel = groupInfo ? `【${groupInfo.name}】` : ''
+
+      const inviteResult = await inviteCustomerToGroup({
+        customerId,
+        groupId: groupInfo?.id || Number(step.group_id)
+      })
+      const outcomeText = inviteResult.simulated
+        ? (inviteResult.outcome || '降级未拉')
+        : '自动执行:已拉入群'
+
       db.prepare(
-        `INSERT INTO follow_ups (customer_id, staff_id, type, content, outcome, created_at)
-         VALUES (?, ?, 'sop_invite_group', ?, '待处理', ?)`
+        `INSERT INTO follow_ups (customer_id, staff_id, type, content, outcome, next_followup_at, created_at)
+         VALUES (?, ?, 'sop_invite_group', ?, ?, ?, ?)`
       ).run(customerId, targetStaff,
-        `[SOP·${sop.name}] 待拉群${groupLabel}：${step.title || step.detail || ''}`, now())
-      logs.push({ kind: 'intent_logged', target: 'invite_group', group_id: step.group_id })
+        `[SOP·${sop.name}] 拉群${groupLabel}：${step.title || step.detail || ''}`,
+        outcomeText, nextAt, now())
+
+      logs.push({ kind: inviteResult.simulated ? 'intent_logged' : 'invited', target: 'invite_group', group_id: step.group_id, outcome: outcomeText })
       break
     }
 
-    case 'send_wechat':
-    case 'send_sms':
+    case 'send_wechat': {
+      // === 自动执行类：调企微客户消息 API，降级则 outcome=降级未发，不进待办 ===
+      const customerInfo = db.prepare('SELECT staff_id FROM customers WHERE id = ?').get(customerId)
+      const templateUsed = step.message_template
+      const content = step.detail || step.title || ''
+
+      const msgResult = await sendWechatMsgToCustomer({
+        customerId,
+        staffId: customerInfo?.staff_id ? Number(customerInfo.staff_id) : null,
+        content,
+        templateId: templateUsed ? Number(step.message_template) : null
+      })
+      const outcomeText = msgResult.simulated
+        ? (msgResult.outcome || '降级未发')
+        : '自动执行:已发送'
+
+      db.prepare(
+        `INSERT INTO wecom_events (event_type, change_type, payload, created_at)
+         VALUES ('sop_step_intent', ?, ?, ?)`
+      ).run('send_wechat', JSON.stringify({
+        sop_id: sop.id, step_index: ctx.stepIndex, step_title: step.title,
+        customer_id: customerId, source: ctx.source || 'sop-engine',
+        template: templateUsed ? step.message_template : null,
+        wecom_outcome: outcomeText
+      }), now())
+
+      db.prepare(
+        `INSERT INTO follow_ups (customer_id, staff_id, type, content, outcome, next_followup_at, created_at)
+         VALUES (?, ?, 'sop_send_wechat', ?, ?, ?, ?)`
+      ).run(customerId, customerInfo?.staff_id ? Number(customerInfo.staff_id) : null,
+        `[SOP·${sop.name}] 企微消息：${step.title || step.detail || ''}`,
+        outcomeText, nextAt, now())
+
+      logs.push({ kind: msgResult.simulated ? 'intent_logged' : 'sent_wechat', target: 'send_wechat', outcome: outcomeText })
+      break
+    }
+
     case 'phone_call':
     case 'gift_send': {
-      const templateUsed = stepType === 'send_wechat' && step.message_template
+      // === 人工待办类：写 follow_up(outcome=待处理) + 推内部企微 ===
+      const customerInfo = db.prepare('SELECT staff_id FROM customers WHERE id = ?').get(customerId)
+      const targetStaff = customerInfo?.staff_id ? Number(customerInfo.staff_id) : null
+
       db.prepare(
         `INSERT INTO wecom_events (event_type, change_type, payload, created_at)
          VALUES ('sop_step_intent', ?, ?, ?)`
       ).run(stepType, JSON.stringify({
         sop_id: sop.id, step_index: ctx.stepIndex, step_title: step.title,
-        customer_id: customerId, source: ctx.source || 'sop-engine',
-        template: templateUsed ? step.message_template : null
+        customer_id: customerId, source: ctx.source || 'sop-engine'
       }), now())
-      const customer = db.prepare('SELECT staff_id FROM customers WHERE id = ?').get(customerId)
-      const targetStaff = customer?.staff_id ? Number(customer.staff_id) : null
-      const msgLabel = templateUsed ? `（模板）` : ''
+
       db.prepare(
-        `INSERT INTO follow_ups (customer_id, staff_id, type, content, outcome, created_at)
-         VALUES (?, ?, ?, ?, '待处理', ?)`
+        `INSERT INTO follow_ups (customer_id, staff_id, type, content, outcome, next_followup_at, created_at)
+         VALUES (?, ?, ?, ?, '待处理', ?, ?)`
       ).run(customerId, targetStaff, `sop_${stepType}`,
-        `[SOP·${sop.name}] 待执行 ${ACTION_LABEL[stepType] || stepType}${msgLabel}：${step.title || step.detail || ''}`,
-        now())
+        `[SOP·${sop.name}] 待执行 ${ACTION_LABEL[stepType] || stepType}：${step.title || step.detail || ''}`,
+        nextAt, now())
+
+      if (targetStaff) {
+        const title = stepType === 'phone_call' ? '📞 SOP 电话待办' : '🎁 SOP 寄礼待办'
+        const dueLabel = nextAt ? `（应于 ${nextAt.slice(5, 16)} 完成）` : ''
+        void sendInternalWecomMessage({
+          staffId: targetStaff,
+          content: `【SOP·${sop.name}】${ACTION_LABEL[stepType] || stepType}：${step.title || step.detail || ''}${dueLabel}`,
+          title, source: 'sop_engine'
+        }).catch(() => {})
+      }
       logs.push({ kind: 'intent_logged', target: stepType })
       break
     }
@@ -187,14 +247,13 @@ function executeStep(step, sop, customerId, ctx = {}) {
 
 const ACTION_LABEL = {
   send_wechat: '企微消息',
-  send_sms: '短信',
   phone_call: '电话',
   invite_group: '拉群',
   gift_send: '寄礼',
 }
 
 // === 3. 对单个客户执行完整 SOP ===
-export function runSopForCustomer(sop, customerId, triggeredBy = 'manual', eventCtx = null) {
+export async function runSopForCustomer(sop, customerId, triggeredBy = 'manual', eventCtx = null) {
   const rawSteps = JSON.parse(sop.steps || '[]')
   const steps = rawSteps.map(s => normalizeStep(s, sop))
 
@@ -207,7 +266,7 @@ export function runSopForCustomer(sop, customerId, triggeredBy = 'manual', event
   }
 
   for (let i = 0; i < steps.length; i++) {
-    const logs = executeStep(steps[i], sop, customerId, { stepIndex: i, source: triggeredBy })
+    const logs = await executeStep(steps[i], sop, customerId, { stepIndex: i, source: triggeredBy })
     for (const l of logs) {
       if (l.kind === 'coupon_issued') outcome.couponIssued++
       else if (l.kind === 'tag_applied') outcome.tagApplied++
@@ -234,7 +293,7 @@ export async function runSopBatch(sop, customerIds, triggeredBy = 'scheduler') {
 
   for (const cid of customerIds) {
     try {
-      const r = runSopForCustomer(sop, cid, triggeredBy)
+      const r = await runSopForCustomer(sop, cid, triggeredBy)
       success++
       couponIssued += r.outcome.couponIssued
       tagApplied += r.outcome.tagApplied

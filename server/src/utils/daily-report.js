@@ -37,7 +37,7 @@ export function runDailyReport(day = dayKey()) {
   const loyalCount = db.prepare("SELECT COUNT(*) AS n FROM customers WHERE stage='loyal'").get().n
   const churnCount = db.prepare("SELECT COUNT(*) AS n FROM customers WHERE stage='churn'").get().n
   const pendingBroadcast = db.prepare("SELECT COUNT(*) AS n FROM broadcasts WHERE status='pending'").get().n
-  const activeSop = db.prepare("SELECT COUNT(*) AS n FROM sops WHERE active=1").get().n
+  const activeSop = db.prepare("SELECT COUNT(*) AS n FROM sops WHERE active=1 AND (is_template IS NULL OR is_template = 0)").get().n
 
   // 阶段迁移统计（A3 自动分级）
   const stageChanges = db.prepare(`

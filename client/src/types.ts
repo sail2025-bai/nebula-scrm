@@ -270,6 +270,11 @@ export interface Sop {
   conversion: number
   active: number
   mode: BizMode
+  is_template?: number
+  /** 作用域: all=全局对全部客户生效（仅admin）, mine=仅创建者名下客户 */
+  scope?: 'all' | 'mine'
+  created_by?: number | null
+  created_by_name?: string | null
   created_at: string | null
 }
 
@@ -338,7 +343,8 @@ export interface DashboardStats {
   repeatRate: number
   churnCount: number
   activeSop: number
-  pendingTasks: { id: number; name: string; target: string; done: boolean }[]
+  pendingTasks: { id: string | number; name: string; target: string; dueAt?: string; overdue?: boolean; done: boolean }[]
+  followupStats: { overdue: number; todayDue: number; future: number }
   churnRisks: { id: number; name: string; wechat_nick: string; stage: Stage; risk: string; detail: string; days: number }[]
   channelStats: { channel: string; count: number }[]
   stageStats: { stage: Stage; count: number }[]

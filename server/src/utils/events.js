@@ -85,7 +85,7 @@ export function emit(type, { customer_id = null, staff_id = null, payload = null
  * @param {number} batchSize - 每轮处理上限，避免 scheduler 单轮阻塞
  * @returns {{ processed: number, sopRuns: number, errors: number, autoStaged: number }}
  */
-export function processPendingEvents(batchSize = 50) {
+export async function processPendingEvents(batchSize = 50) {
   const events = db.prepare(`
     SELECT * FROM events
     WHERE status = 'pending'
@@ -136,7 +136,7 @@ function extractSpendFromPayload(e) {
 }
 
 /** 对一条 event 找所有触发条件满足的 active SOP → 执行 steps */
-function runMatchingSOPs(e) {
+async function runMatchingSOPs(e) {
   if (!e.customer_id) return 0   // 没有客户 ID 的事件不触发 SOP
 
   // 1. 先按事件类型映射找 trigger_type
@@ -158,7 +158,9 @@ function runMatchingSOPs(e) {
   for (const triggerType of matchedTriggerTypes) {
     let sql = `
       SELECT * FROM sops
-      WHERE active = 1 AND trigger_type = ?
+      WHERE active = 1 AND (is_template IS NULL OR is_template = 0)
+        AND trigger_type = ?
+        AND (scope = 'all' OR scope IS NULL)
         AND (trigger_days IS NULL OR trigger_days = 0 OR ? >= trigger_days * 24)
         AND (trigger_channel IS NULL OR trigger_channel = ?)
     `
@@ -179,7 +181,7 @@ function runMatchingSOPs(e) {
           const hit = matchConditions(conds, e.customer_id, { type: e.type, payload: e.payload })
           if (!hit) continue
         }
-        runSopForCustomer(sop, e.customer_id, `event:${e.type}`, e)
+        await runSopForCustomer(sop, e.customer_id, `event:${e.type}`, e)
         executed++
       } catch (err) {
         console.error(`[events] SOP #${sop.id} 执行失败: ${err.message}`)
@@ -190,7 +192,7 @@ function runMatchingSOPs(e) {
 }
 
 /** delayed SOP：事件 created_at + trigger_days 已到期但之前没跑过的 */
-function runDelayedSOPs() {
+async function runDelayedSOPs() {
   const SOP_TYPES_WITH_DELAY = ['first_purchase', 'days_inactive', 'chat_join', 'custom']
   for (const triggerType of SOP_TYPES_WITH_DELAY) {
     const eventType = SOP_TRIGGER_TO_EVENT[triggerType] || 'customer_stage_changed'
@@ -211,7 +213,7 @@ function runDelayedSOPs() {
       `).get(d.id, `%event_id=${d.event_id}%`)
       if (already) continue
       try {
-        runSopForCustomer(d, d.customer_id, `event:${eventType}:delay`, { id: d.event_id, type: eventType })
+        await runSopForCustomer(d, d.customer_id, `event:${eventType}:delay`, { id: d.event_id, type: eventType })
       } catch { /* 吞 */ }
     }
   }

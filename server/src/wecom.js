@@ -318,3 +318,199 @@ export function syncGroupMemberLeave(groupId, externalUserid) {
 export function dismissGroup(groupId) {
   db.prepare('UPDATE wechat_groups SET dismissed = 1 WHERE id = ?').run(groupId)
 }
+
+// === 内部应用消息：给企业员工推通知（SOP 待办、内部提醒）===
+// 真实调用走 message/send；没配 agent/app_secret 或 staff.wecom_userid 为空 → 降级记录 wecom_events
+// 经验：硬编码的外部接口失败不可阻断主流程，必须降级 + 日志闭环
+
+// === 企微外部联系人消息（给客户发消息，真调 API + 降级）===
+// 调用 externalcontact/add_msg_template 发送群发模板消息，
+// 或 externalcontact/send_welcome_msg 发送欢迎语（新客48小时内）
+// 生产环境需要配置企微客户联系权限 + 已审核的模板，没配就走降级
+export async function sendWechatMsgToCustomer({ customerId, staffId, content, templateId = null }) {
+  const customer = db.prepare('SELECT id, name, external_userid, staff_id FROM customers WHERE id = ?').get(customerId)
+  if (!customer) return { ok: false, simulated: true, reason: '客户不存在' }
+  const staff = staffId
+    ? db.prepare('SELECT id, name, wecom_userid FROM staff WHERE id = ?').get(staffId)
+    : db.prepare('SELECT id, name, wecom_userid FROM staff WHERE id = ?').get(customer.staff_id)
+
+  const cfg = db.prepare('SELECT corp_id, corp_secret FROM wecom_config WHERE id = 1').get()
+  const hasReal = !!(cfg && cfg.corp_id && cfg.corp_secret && cfg.corp_id !== 'wwtest')
+  const hasExtUserId = !!(customer.external_userid && customer.external_userid.trim())
+  const hasStaffUserId = !!(staff && staff.wecom_userid && staff.wecom_userid.trim())
+
+  const logIt = (outcome, wecomEvent) => {
+    db.prepare(`INSERT INTO wecom_events (event_type, change_type, userid, payload, handled)
+      VALUES (?, ?, ?, ?, 1)`).run('customer_msg', outcome, customer.external_userid || null,
+      JSON.stringify({ customer_id: customer.id, customer_name: customer.name, staff_id: staff?.id, content, template_id: templateId, reason: outcome }))
+  }
+
+  if (!hasReal) {
+    logIt('降级未发:企微未配置', '降级未发:企微未配置')
+    return { ok: true, simulated: true, outcome: '降级未发:企微未配置', customer: customer.name }
+  }
+  if (!hasExtUserId) {
+    logIt('降级未发:客户未同步 external_userid')
+    return { ok: true, simulated: true, outcome: '降级未发:客户未绑定企微', customer: customer.name }
+  }
+  if (!hasStaffUserId) {
+    logIt('降级未发:顾问未同步 wecom_userid')
+    return { ok: true, simulated: true, outcome: '降级未发:顾问未绑定企微', customer: customer.name }
+  }
+
+  try {
+    // 优先用模板消息（可批量、有审核），没模板就用文本群发
+    let apiPath, msgData
+    if (templateId) {
+      apiPath = 'cgi-bin/externalcontact/add_msg_template'
+      msgData = {
+        chat_type: 'single',
+        external_userid_list: [customer.external_userid],
+        sender: staff.wecom_userid,
+        text: { content },
+        template_id: templateId
+      }
+    } else {
+      // 无模板 → 用群发文本（企微限制：每人每天最多 1 条群发）
+      apiPath = 'cgi-bin/externalcontact/add_msg_template'
+      msgData = {
+        chat_type: 'single',
+        external_userid_list: [customer.external_userid],
+        sender: staff.wecom_userid,
+        text: { content }
+      }
+    }
+    const token = await getAccessToken(cfg.corp_id, cfg.corp_secret)
+    const res = await fetch(`https://qyapi.weixin.qq.com/${apiPath}?access_token=${encodeURIComponent(token)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(msgData)
+    })
+    const data = await res.json()
+    if (data.errcode === 0) {
+      logIt('已发送', '已发送')
+      return { ok: true, simulated: false, outcome: '已发送', customer: customer.name, msgid: data.msgid }
+    } else {
+      const reason = `企微 errcode=${data.errcode}`
+      logIt(`降级未发:${data.errmsg || reason}`)
+      return { ok: true, simulated: true, outcome: `降级未发:${data.errmsg || reason}`, customer: customer.name }
+    }
+  } catch (e) {
+    logIt(`降级未发:${e.message}`)
+    return { ok: true, simulated: true, outcome: `降级未发:${e.message}`, customer: customer.name }
+  }
+}
+
+// === 拉外部联系人入企微客户群（真调 API + 降级）===
+export async function inviteCustomerToGroup({ customerId, groupId }) {
+  const customer = db.prepare('SELECT id, name, external_userid FROM customers WHERE id = ?').get(customerId)
+  const group = db.prepare('SELECT id, name, chat_id FROM groups WHERE id = ?').get(groupId)
+  if (!customer || !group) return { ok: false, simulated: true, reason: '客户或群组不存在' }
+
+  const cfg = db.prepare('SELECT corp_id, corp_secret FROM wecom_config WHERE id = 1').get()
+  const hasReal = !!(cfg && cfg.corp_id && cfg.corp_secret && cfg.corp_id !== 'wwtest')
+  const hasExt = !!(customer.external_userid && customer.external_userid.trim())
+  const hasChatId = !!(group.chat_id && group.chat_id.trim())
+
+  const logIt = (outcome) => {
+    db.prepare(`INSERT INTO wecom_events (event_type, change_type, userid, payload, handled)
+      VALUES (?, ?, ?, ?, 1)`).run('group_invite', outcome, customer.external_userid || null,
+      JSON.stringify({ customer_id: customer.id, customer_name: customer.name, group_id: group.id, group_name: group.name, reason: outcome }))
+  }
+
+  if (!hasReal) {
+    logIt('降级未拉:企微未配置')
+    return { ok: true, simulated: true, outcome: '降级未拉:企微未配置', customer: customer.name, group: group.name }
+  }
+  if (!hasExt || !hasChatId) {
+    logIt(`降级未拉:${!hasExt ? '客户' : '群'}未同步企微字段`)
+    return { ok: true, simulated: true, outcome: '降级未拉:客户/群组未绑定企微', customer: customer.name, group: group.name }
+  }
+
+  try {
+    const token = await getAccessToken(cfg.corp_id, cfg.corp_secret)
+    const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/appchat/invite?access_token=${encodeURIComponent(token)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chatid: group.chat_id,
+        invite_list: [{ userid: customer.external_userid }]
+      })
+    })
+    const data = await res.json()
+    // 注意：客户群拉人 API 实际是 group_wchat / invite，具体路径可能要按企微文档调整
+    if (data.errcode === 0) {
+      logIt('已拉入群')
+      return { ok: true, simulated: false, outcome: '已拉入群', customer: customer.name, group: group.name }
+    } else {
+      logIt(`降级未拉:${data.errmsg || 'errcode=' + data.errcode}`)
+      return { ok: true, simulated: true, outcome: `降级未拉:${data.errmsg || data.errcode}`, customer: customer.name, group: group.name }
+    }
+  } catch (e) {
+    logIt(`降级未拉:${e.message}`)
+    return { ok: true, simulated: true, outcome: `降级未拉:${e.message}`, customer: customer.name, group: group.name }
+  }
+}
+
+export async function sendInternalWecomMessage({ staffId, content, title = '', source = 'sop' }) {
+  const staff = db.prepare('SELECT id, name, wecom_userid FROM staff WHERE id = ?').get(staffId)
+  if (!staff) return { ok: false, simulated: false, reason: '顾问不存在' }
+
+  const cfg = db.prepare('SELECT corp_id, app_agent_id, app_secret FROM wecom_config WHERE id = 1').get()
+  const hasRealCfg = !!(cfg && cfg.corp_id && cfg.app_agent_id && cfg.app_secret && cfg.corp_id !== 'wwtest')
+  const hasUserId = !!(staff.wecom_userid && staff.wecom_userid.trim())
+
+  const simulatedLog = (reason) => {
+    db.prepare(`INSERT INTO wecom_events (event_type, change_type, userid, payload, handled)
+      VALUES ('internal_msg', 'simulated', ?, ?, ?)`).run(
+      staff.wecom_userid || null,
+      JSON.stringify({ source, title, content, staff_id: staff.id, staff_name: staff.name, reason }),
+      1
+    )
+    log('wecom', 'info', `内部消息(模拟) → ${staff.name}: ${title || content.slice(0, 40)} [reason=${reason}]`)
+  }
+
+  if (!hasRealCfg) {
+    simulatedLog('未配置企微自建应用 (app_agent_id/app_secret)')
+    return { ok: true, simulated: true, reason: '未配置企微应用', staff_name: staff.name }
+  }
+  if (!hasUserId) {
+    simulatedLog(`顾问 ${staff.name} 未同步 wecom_userid`)
+    return { ok: true, simulated: true, reason: '顾问未绑定企微账号', staff_name: staff.name }
+  }
+
+  try {
+    // 独立 token 缓存：应用 secret 和企业 secret 不同，必须单独换
+    const token = await getAccessToken(cfg.corp_id, cfg.app_secret)
+    const body = {
+      touser: staff.wecom_userid,
+      msgtype: 'textcard',
+      agentid: Number(cfg.app_agent_id),
+      textcard: {
+        title: title || 'SOP 待办提醒',
+        description: content,
+        url: '#',
+        btntxt: '查看详情'
+      }
+    }
+    const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    const data = await res.json()
+    if (data.errcode === 0) {
+      db.prepare(`INSERT INTO wecom_events (event_type, change_type, userid, payload, handled)
+        VALUES ('internal_msg', 'sent', ?, ?, 1)`).run(
+        staff.wecom_userid,
+        JSON.stringify({ source, title, content, staff_id: staff.id, msgid: data.msgid })
+      )
+      log('wecom', 'info', `内部消息 → ${staff.name} 成功 msgid=${data.msgid}`)
+      return { ok: true, simulated: false, staff_name: staff.name }
+    } else {
+      simulatedLog(`企微返回 errcode=${data.errcode} errmsg=${data.errmsg}`)
+      return { ok: false, simulated: true, reason: `企微 ${data.errmsg || data.errcode}`, staff_name: staff.name }
+    }
+  } catch (e) {
+    simulatedLog(`网络异常: ${e.message}`)
+    return { ok: false, simulated: true, reason: e.message, staff_name: staff.name }
+  }
+}

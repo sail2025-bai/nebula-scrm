@@ -36,24 +36,72 @@ router.get('/stats', (req, res) => {
     : db.prepare('SELECT COALESCE(SUM(member_count), 0) AS members, COALESCE(SUM(today_messages), 0) AS messages FROM wechat_groups').get()
   const spendAgg = db.prepare('SELECT COALESCE(SUM(spend), 0) AS spend, COALESCE(SUM(orders), 0) AS orders FROM customers' + cw.where).get(...cw.args)
   const churnCount = n(`SELECT COUNT(*) AS n FROM customers WHERE stage = 'churn'` + cw.and, ...cw.args)
-  const activeSop = mode ? n('SELECT COUNT(*) AS n FROM sops WHERE active = 1 AND mode = ?', mode) : n('SELECT COUNT(*) AS n FROM sops WHERE active = 1')
+  const activeSop = mode ? n('SELECT COUNT(*) AS n FROM sops WHERE active = 1 AND (is_template IS NULL OR is_template = 0) AND mode = ?', mode) : n('SELECT COUNT(*) AS n FROM sops WHERE active = 1')
   const repeatCount = n('SELECT COUNT(*) AS n FROM customers WHERE orders >= 2' + cw.and, ...cw.args)
 
   const weekGrowthRate = prevNew > 0 ? Math.round(((weekNew - prevNew) / prevNew) * 1000) / 10 : weekNew > 0 ? 100 : 0
   const avgOrderValue = spendAgg.orders > 0 ? Math.round(spendAgg.spend / spendAgg.orders) : 0
   const repeatRate = totalCustomers > 0 ? Math.round((repeatCount / totalCustomers) * 1000) / 10 : 0
 
-  const pendingTasks = mode === 'service'
-    ? [
-        { id: 1, name: '高意向线索24h内诊断会邀约', target: '12 位SQL意向客户', done: false },
-        { id: 2, name: '方案报价阶段决策人回访 (方案发送后第3天)', target: '6 家已审阅方案企业', done: false },
-        { id: 3, name: '官网白皮书下载自动培育触达', target: '', done: true }
-      ]
-    : [
-        { id: 1, name: '新客户首单回访关怀 (添加后第3天)', target: '54 位新客', done: false },
-        { id: 2, name: '本周生日高价值会员专属礼券推送', target: '18 位黑金VIP', done: false },
-        { id: 3, name: '早安社群互动秒杀话题 (09:30定时)', target: '', done: true }
-      ]
+  // === SOP 待办真实数据：从 follow_ups 拉，按 next_followup_at 分逾期/今日/未来 ===
+  // 分层过滤：手动跟进全保留（call/wechat/gift/note），SOP 类只留需要人工的（phone_call/gift_send），
+  // 自动执行类（sop_send_wechat/sop_invite_group/sop_assign/sop）已由 outcome=自动执行/降级未发 自然排除
+  const todayEnd = dayKey(new Date()) + ' 23:59:59'
+  const TYPE_FILTER = "(f.type NOT LIKE 'sop_%' OR f.type IN ('sop_phone_call','sop_gift_send'))"
+  const baseFuWhere = cw.where
+    ? ` WHERE f.outcome = '待处理' AND c.customer_type = ? AND ${TYPE_FILTER}`
+    : ` WHERE f.outcome = '待处理' AND ${TYPE_FILTER}`
+  const fuArgs = cw.args
+  const overdueCount = n(
+    `SELECT COUNT(*) AS n FROM follow_ups f JOIN customers c ON c.id = f.customer_id ${baseFuWhere} AND f.next_followup_at IS NOT NULL AND f.next_followup_at < ?`,
+    ...fuArgs, todayStart
+  )
+  const todayDueCount = n(
+    `SELECT COUNT(*) AS n FROM follow_ups f JOIN customers c ON c.id = f.customer_id ${baseFuWhere} AND f.next_followup_at >= ? AND f.next_followup_at <= ?`,
+    ...fuArgs, todayStart, todayEnd
+  )
+  const futureCount = n(
+    `SELECT COUNT(*) AS n FROM follow_ups f JOIN customers c ON c.id = f.customer_id ${baseFuWhere} AND f.next_followup_at > ?`,
+    ...fuArgs, todayEnd
+  )
+  // 今日 + 逾期的真实任务清单（按 next_followup_at 升序，逾期排最前）
+  const pendingTasks = db.prepare(
+    `SELECT f.id, f.type, f.content, f.next_followup_at, c.name AS customer_name, s.name AS staff_name
+     FROM follow_ups f
+     JOIN customers c ON c.id = f.customer_id
+     LEFT JOIN staff s ON s.id = f.staff_id
+     ${baseFuWhere}
+     ORDER BY
+       CASE WHEN f.next_followup_at IS NULL THEN 1 ELSE 0 END,
+       COALESCE(f.next_followup_at, f.created_at) ASC
+     LIMIT 8`
+  ).all(...fuArgs).map(r => {
+    const typeLabel = { sop_phone_call: '电话', sop_send_wechat: '企微消息', sop_invite_group: '拉群', sop_gift_send: '寄礼', sop: 'SOP自动', sop_assign: '分配顾问', call: '电话', wechat: '企微消息', gift: '寄礼', note: '备注' }[r.type] || r.type
+    const dueAt = r.next_followup_at ? r.next_followup_at.slice(5, 16) : '无时间'
+    const isOverdue = r.next_followup_at && r.next_followup_at < todayStart
+    return {
+      id: `fu_${r.id}`,
+      name: r.content.length > 28 ? r.content.slice(0, 28) + '…' : r.content,
+      target: `${typeLabel} · 客户${r.customer_name}${r.staff_name ? ' · 顾问' + r.staff_name : ''}`,
+      dueAt,
+      overdue: !!isOverdue,
+      done: false
+    }
+  })
+
+  // 若真实数据不足，保留少量通用 SOP 提示作 fallback（不超过 3 条）
+  if (pendingTasks.length < 2) {
+    const fallback = mode === 'service'
+      ? [
+          { id: 'fb1', name: '方案报价阶段决策人回访 (方案发送后第3天)', target: '通用SOP · 顾问', dueAt: '第3天', overdue: false, done: false },
+          { id: 'fb2', name: '客户续约陪伴提醒 (距到期30天)', target: '通用SOP · CSM', dueAt: '30天', overdue: false, done: false },
+        ]
+      : [
+          { id: 'fb1', name: '新客户首单回访关怀 (添加后第3天)', target: '通用SOP · 顾问', dueAt: '第3天', overdue: false, done: false },
+          { id: 'fb2', name: '会员生日专属礼券推送 (生日前3天)', target: '通用SOP', dueAt: '生日前3天', overdue: false, done: false },
+        ]
+    pendingTasks.push(...fallback.slice(0, 3 - pendingTasks.length))
+  }
 
   const churnRisks = db.prepare(`SELECT * FROM customers WHERE stage = 'churn'` + cw.and + ' ORDER BY last_active ASC LIMIT 3').all(...cw.args).map((r) => {
     const days = daysSince(r.last_active)
@@ -86,6 +134,7 @@ router.get('/stats', (req, res) => {
     churnCount,
     activeSop,
     pendingTasks,
+    followupStats: { overdue: overdueCount, todayDue: todayDueCount, future: futureCount },
     churnRisks,
     channelStats,
     stageStats

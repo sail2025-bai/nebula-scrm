@@ -180,7 +180,10 @@ function initSchema() {
     ['sops', 'trigger_min_spend', 'REAL DEFAULT 0'],
     ['sops', 'trigger_channel', 'TEXT'],
     ['sops', 'mode', 'TEXT DEFAULT "retail"'],
-    ['sops', 'created_at', 'TEXT']
+    ['sops', 'created_at', 'TEXT'],
+    // SOP 作用域：all=全局对全部客户生效, mine=仅创建者名下客户
+    ['sops', 'scope', 'TEXT DEFAULT "all"'],
+    ['sops', 'created_by', 'INTEGER']
   ]
   for (const [tbl, col, type] of alters2) {
     try { db.prepare(`ALTER TABLE ${tbl} ADD COLUMN ${col} ${type}`).run() } catch {}
@@ -290,6 +293,14 @@ function initSchema() {
   // === SOP 自定义条件引擎（可视化配置，不再手写 SQL）===
   try { db.prepare('ALTER TABLE sops ADD COLUMN conditions TEXT').run() } catch {}
 
+  // === 内部企微应用消息（给顾问推 SOP 待办 / 内部通知）===
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN app_agent_id TEXT').run() } catch {}
+  try { db.prepare('ALTER TABLE wecom_config ADD COLUMN app_secret TEXT').run() } catch {}
+
+  // === SOP 模板 / 用户 SOP 分野 ===
+  // 系统固化模板 is_template=1，永不执行；用户自建 / 从模板 clone 的 is_template=0
+  try { db.prepare('ALTER TABLE sops ADD COLUMN is_template INTEGER DEFAULT 0').run() } catch {}
+
   // P1-8: 废弃 wecom_config 上的 msg_audit runtime 字段（last_msgid / last_polled_at / status），
   // 游标统一走 msg_audit_state 表。SQLite 不支持 DROP COLUMN，走 rebuild。
   try {
@@ -315,17 +326,19 @@ function initSchema() {
           msg_audit_private_key TEXT,
           msg_audit_enabled INTEGER DEFAULT 0,
           wecom_webhook_ips TEXT,
-          video_shop_webhook_ips TEXT
+          video_shop_webhook_ips TEXT,
+          app_agent_id TEXT,
+          app_secret TEXT
         );
         INSERT INTO _wecom_config_new
           (id, corp_id, corp_secret, callback_token, encoding_aes_key, status, last_sync_at,
            ext_api_key, video_shop_appid, video_shop_secret, video_shop_token, video_shop_encoding_aes_key,
            msg_audit_agent_id, msg_audit_private_key, msg_audit_enabled,
-           wecom_webhook_ips, video_shop_webhook_ips)
+           wecom_webhook_ips, video_shop_webhook_ips, app_agent_id, app_secret)
           SELECT id, corp_id, corp_secret, callback_token, encoding_aes_key, status, last_sync_at,
                  ext_api_key, video_shop_appid, video_shop_secret, video_shop_token, video_shop_encoding_aes_key,
                  msg_audit_agent_id, msg_audit_private_key, msg_audit_enabled,
-                 wecom_webhook_ips, video_shop_webhook_ips
+                 wecom_webhook_ips, video_shop_webhook_ips, app_agent_id, app_secret
           FROM wecom_config;
         DROP TABLE wecom_config;
         ALTER TABLE _wecom_config_new RENAME TO wecom_config;

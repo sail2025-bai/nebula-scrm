@@ -22,7 +22,6 @@ const ACTION_OPTIONS: { value: string; label: string; icon: string; typeLabel: s
   { value: 'push_coupon', label: '推送优惠券', icon: 'fa-solid fa-ticket', typeLabel: 'wechat' },
   { value: 'invite_group', label: '拉入社群', icon: 'fa-solid fa-user-group', typeLabel: 'wechat' },
   { value: 'assign_staff', label: '分配顾问', icon: 'fa-solid fa-user-tie', typeLabel: 'note' },
-  { value: 'send_sms', label: '短信通知', icon: 'fa-solid fa-mobile-screen', typeLabel: 'wechat' },
   { value: 'phone_call', label: '电话回访', icon: 'fa-solid fa-phone', typeLabel: 'call' },
   { value: 'gift_send', label: '寄送礼品', icon: 'fa-solid fa-gift', typeLabel: 'gift' },
   { value: 'note_mark', label: '打标签备注', icon: 'fa-solid fa-tags', typeLabel: 'note' }
@@ -95,6 +94,7 @@ interface SopFormState {
   trigger_min_spend: number
   trigger_channel: string
   mode: BizMode
+  scope?: 'all' | 'mine'
   steps: SopStep[]
   conditions: SopConditions | null
 }
@@ -107,13 +107,18 @@ const emptyForm: SopFormState = {
   trigger_min_spend: 500,
   trigger_channel: '',
   mode: 'retail',
+  scope: 'mine',
   steps: [{ phase: '步骤1 · 立即', title: '', detail: '', metric: '待配置', action: 'send_wechat', delay_days: 0 }],
   conditions: null
 }
 
 export default function SopView({ mode }: { mode: BizMode }) {
   const { showToast } = useToast()
-  const [sops, setSops] = useState<Sop[]>([])
+  const [sops, setSops] = useState<Sop[]>([])        // 我的 SOP（is_template=0）
+  const [templates, setTemplates] = useState<Sop[]>([]) // 系统模板（is_template=1）
+  // 后端附加的当前用户元信息：决定是否显示 scope 下拉、做列表过滤
+  const [myMeta, setMyMeta] = useState<{ is_admin: boolean; me: { id: number; account: string; name: string | null } | null } | null>(null)
+  const [viewTab, setViewTab] = useState<'my' | 'template'>('my')
   const [detail, setDetail] = useState<Sop | null>(null)
 
   // 表单状态
@@ -150,7 +155,22 @@ export default function SopView({ mode }: { mode: BizMode }) {
   }, [])
 
   const load = useCallback(() => {
-    api.getSops(mode).then(setSops).catch(() => {})
+    api.getSops(mode).then(resp => {
+      const items = resp.items || (resp as unknown as Sop[])  // 兼容旧格式兜底
+      const meta = resp._meta || null
+      if (meta) setMyMeta(meta)
+      // 前端侧软过滤：非 admin 时，只展示 scope='all'（全局）或 scope='mine' 且 created_by=自己 的 SOP
+      const isAdmin = meta?.is_admin ?? false
+      const myId = meta?.me?.id ?? null
+      const filtered = isAdmin
+        ? items
+        : items.filter(s => s.is_template || (s.scope === 'all') || (s.scope !== 'mine') || (s.created_by && s.created_by === myId))
+      setSops(filtered)
+    }).catch(() => {})
+    api.getSopTemplates(mode).then(resp => {
+      const items = resp.items || (resp as unknown as Sop[])
+      setTemplates(items.filter(s => s.is_template))
+    }).catch(() => {})
   }, [mode])
 
   useEffect(() => { load() }, [load])
@@ -181,6 +201,7 @@ export default function SopView({ mode }: { mode: BizMode }) {
       trigger_min_spend: sop.trigger_min_spend || 500,
       trigger_channel: sop.trigger_channel || '',
       mode: sop.mode || mode,
+      scope: sop.scope || 'mine',
       steps: sop.steps.length ? sop.steps : [{ phase: '步骤1 · 立即', title: '', detail: '', metric: '待配置', action: 'send_wechat', delay_days: 0 }],
       conditions: sop.conditions || null
     })
@@ -205,7 +226,7 @@ export default function SopView({ mode }: { mode: BizMode }) {
     if (validSteps.length === 0) return showToast('至少需要 1 个完整步骤', 'warning')
     setSaving(true)
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         name: f.name.trim(),
         trigger_type: f.trigger_type,
         trigger_desc: f.trigger_desc.trim() || undefined,
@@ -214,11 +235,12 @@ export default function SopView({ mode }: { mode: BizMode }) {
         trigger_channel: f.trigger_channel?.trim() || undefined,
         mode: f.mode,
         steps: validSteps,
-        conditions: f.conditions || null
+        conditions: f.conditions || null,
+        scope: (myMeta?.is_admin ? (f.scope || 'mine') : 'mine') as 'all' | 'mine',
       }
       const updated = f.id
-        ? await api.updateSop(f.id, payload)
-        : await api.createSop(payload)
+        ? await api.updateSop(f.id, payload as Parameters<typeof api.updateSop>[1])
+        : await api.createSop(payload as Parameters<typeof api.createSop>[0])
       setFormOpen(false)
       showToast(`「${updated.name}」${f.id ? '已更新' : '已创建'}`, 'success')
       load()
@@ -232,6 +254,11 @@ export default function SopView({ mode }: { mode: BizMode }) {
     try {
       const cloned = await api.cloneSop(sop.id)
       showToast(`已克隆「${cloned.name}」，默认暂停，请编辑后启用`, 'success')
+      // 从系统模板克隆时，自动切到"我的 SOP"并关闭详情
+      if (sop.is_template) {
+        setDetail(null)
+        setViewTab('my')
+      }
       load()
     } catch (e) { showToast(e instanceof Error ? e.message : '克隆失败', 'warning') }
   }
@@ -273,13 +300,13 @@ export default function SopView({ mode }: { mode: BizMode }) {
     setEditing({ ...editing, steps: editing.steps.filter((_, i) => i !== idx) })
   }
 
-  const featured = sops[0]
-  const others = sops.slice(1)
+  const currentList = viewTab === 'my' ? sops : templates
+  const featured = currentList[0]
+  const others = currentList.slice(1)
 
   // 表单内实时预览匹配客户（根据 trigger_type 本地过滤）
   const livePreview = useMemo(() => {
     if (!editing) return null
-    // 简化版：不调后端（新建时 sop 还不存在），只显示提示
     return null
   }, [editing])
 
@@ -308,40 +335,79 @@ export default function SopView({ mode }: { mode: BizMode }) {
             <i className="fa-solid fa-chart-simple text-xs" />
             <span>📊 运行历史</span>
           </button>
-          <button
-            onClick={openCreate}
-            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 shadow-sm transition"
-          >
-            <i className="fa-solid fa-plus text-xs" />
-            <span>新建自动化 SOP 规则</span>
-          </button>
+          {viewTab === 'my' && (
+            <button
+              onClick={openCreate}
+              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 shadow-sm transition"
+            >
+              <i className="fa-solid fa-plus text-xs" />
+              <span>新建自动化 SOP 规则</span>
+            </button>
+          )}
         </div>
       </div>
 
+      {/* Tab 切换 */}
+      <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg w-fit">
+        <button
+          onClick={() => setViewTab('my')}
+          className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition ${
+            viewTab === 'my' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <i className="fa-solid fa-user-gear mr-1 text-[10px]" />我的 SOP
+          <span className="ml-1 text-[10px] text-slate-400">({sops.length})</span>
+        </button>
+        <button
+          onClick={() => setViewTab('template')}
+          className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition ${
+            viewTab === 'template' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <i className="fa-solid fa-layer-group mr-1 text-[10px]" />系统模板
+          <span className="ml-1 text-[10px] text-slate-400">({templates.length})</span>
+        </button>
+      </div>
+
+      {viewTab === 'template' && (
+        <div className="bg-blue-50 border border-blue-200 text-blue-700 text-[11px] px-3 py-2 rounded-lg">
+          💡 系统模板是行业标准方案，只读不可执行。点击「使用此模板」克隆一份到你的 SOP，再编辑步骤 / 调整触发条件 / 激活运行。
+        </div>
+      )}
+
       {featured && (
-        <div className={`bg-white rounded-2xl border border-slate-200/80 p-5 custom-shadow ${!featured.active ? 'opacity-60' : ''}`}>
+        <div className={`bg-white rounded-2xl border border-slate-200/80 p-5 custom-shadow ${!featured.active && !featured.is_template ? 'opacity-60' : ''}`}>
           <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
             <div className="flex items-center gap-3 min-w-0">
-              <span className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-sm shrink-0">
-                <i className="fa-solid fa-route" />
+              <span className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm shrink-0 ${featured.is_template ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                <i className={featured.is_template ? 'fa-solid fa-layer-group' : 'fa-solid fa-route'} />
               </span>
               <div className="min-w-0">
                 <h5 className="font-bold text-slate-900 text-sm truncate">{featured.name}</h5>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-[11px] text-emerald-600 font-medium">{featured.trigger_desc}</span>
                   <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{featured.mode}</span>
+                  {featured.is_template && <span className="text-[10px] bg-blue-50 text-blue-600 font-medium px-1.5 py-0.5 rounded">系统模板</span>}
+                  {!featured.is_template && (featured.scope === 'mine'
+                    ? <span className="text-[10px] bg-indigo-50 text-indigo-600 font-medium px-1.5 py-0.5 rounded">🔵 仅我的客户</span>
+                    : <span className="text-[10px] bg-amber-50 text-amber-600 font-medium px-1.5 py-0.5 rounded">🟢 全局系统</span>
+                  )}
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-3 shrink-0">
-              {featured.active ? (
+              {featured.is_template ? (
+                <span className="text-xs bg-slate-100 text-slate-500 font-medium px-2 py-0.5 rounded-full">只读 · 需克隆后使用</span>
+              ) : featured.active ? (
                 <span className="text-xs bg-emerald-50 text-emerald-700 font-medium px-2 py-0.5 rounded-full">已激活</span>
               ) : (
                 <span className="text-xs bg-slate-100 text-slate-500 font-medium px-2 py-0.5 rounded-full">已暂停</span>
               )}
-              <span className="text-xs text-slate-400 whitespace-nowrap">
-                已跑通 {featured.run_count} 人次 | {conversionLabel(featured.name)} {featured.conversion}%
-              </span>
+              {!featured.is_template && (
+                <span className="text-xs text-slate-400 whitespace-nowrap">
+                  已跑通 {featured.run_count} 人次 | {conversionLabel(featured.name)} {featured.conversion}%
+                </span>
+              )}
             </div>
           </div>
 
@@ -365,14 +431,30 @@ export default function SopView({ mode }: { mode: BizMode }) {
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 pt-4 border-t border-slate-100 text-xs">
-            <span className="text-slate-400">支持根据客户画像、行为、标签自动触发 SOP 流转</span>
+            <span className="text-slate-400">
+              {featured.is_template ? '🏷️ 行业标准方案 · 克隆后可编辑' : '支持根据客户画像、行为、标签自动触发 SOP 流转'}
+            </span>
             <div className="flex items-center gap-2 flex-wrap">
-              <button onClick={() => openRun(featured)} disabled={!featured.active} className="px-3 py-1 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 text-amber-700 rounded-md font-medium transition">
-                <i className="fa-solid fa-play text-[10px] mr-1" />手动执行
-              </button>
-              <button onClick={() => openEdit(featured)} className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md font-medium transition">编辑规则</button>
-              <button onClick={() => handleClone(featured)} className="px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-md font-medium transition">克隆此方案</button>
-              <ToggleSwitch active={featured.active === 1} onToggle={() => handleToggle(featured)} />
+              {featured.is_template ? (
+                <>
+                  <button onClick={() => setDetail(featured)} className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md font-medium transition">查看详情</button>
+                  <button onClick={() => handleClone(featured)} className="px-3 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-md font-medium transition">
+                    <i className="fa-solid fa-copy text-[10px] mr-1" />使用此模板
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button onClick={() => openRun(featured)} disabled={!featured.active} className="px-3 py-1 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 text-amber-700 rounded-md font-medium transition">
+                    <i className="fa-solid fa-play text-[10px] mr-1" />手动执行
+                  </button>
+                  <button onClick={() => openEdit(featured)} className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md font-medium transition">编辑规则</button>
+                  <button onClick={() => handleClone(featured)} className="px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-md font-medium transition">克隆此方案</button>
+                  <button onClick={() => handleDelete(featured)} className="px-3 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-md font-medium transition">
+                    <i className="fa-solid fa-trash text-[10px] mr-1" />删除
+                  </button>
+                  <ToggleSwitch active={featured.active === 1} onToggle={() => handleToggle(featured)} />
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -381,22 +463,45 @@ export default function SopView({ mode }: { mode: BizMode }) {
       {others.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {others.map(sop => (
-            <div key={sop.id} className={`bg-white p-4 rounded-xl border border-slate-200 hover:shadow-md transition ${!sop.active ? 'opacity-60' : ''}`}>
+            <div key={sop.id} className={`bg-white p-4 rounded-xl border border-slate-200 hover:shadow-md transition ${!sop.active && !sop.is_template ? 'opacity-60' : ''}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <span className="text-xs font-bold text-slate-800 truncate block">{sop.name}</span>
                   <p className="text-[11px] text-slate-400 mt-0.5 truncate">{sop.trigger_desc}</p>
+                  <div className="flex items-center gap-1 mt-1">
+                    {!sop.is_template && (sop.scope === 'mine'
+                      ? <span className="text-[9px] bg-indigo-50 text-indigo-600 px-1 py-0.5 rounded">🔵 我的</span>
+                      : <span className="text-[9px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded">🟢 全局</span>
+                    )}
+                  </div>
                 </div>
-                <span className={sop.active ? 'w-2 h-2 rounded-full bg-emerald-500 shrink-0 mt-1' : 'text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-medium shrink-0'}>
-                  {sop.active ? '' : '已暂停'}
-                </span>
+                {sop.is_template ? (
+                  <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-medium shrink-0">模板</span>
+                ) : sop.active ? (
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 mt-1" />
+                ) : (
+                  <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-medium shrink-0">已暂停</span>
+                )}
               </div>
               <div className="mt-3 flex items-center justify-between text-xs">
-                <span className="text-emerald-600 font-medium">{conversionLabel(sop.name)} {sop.conversion}%</span>
+                {sop.is_template ? (
+                  <span className="text-blue-600 font-medium">🏷️ 系统方案</span>
+                ) : (
+                  <span className="text-emerald-600 font-medium">{conversionLabel(sop.name)} {sop.conversion}%</span>
+                )}
                 <div className="flex items-center gap-2">
                   <button onClick={() => setDetail(sop)} className="text-slate-400 hover:text-slate-600 transition">详情</button>
-                  <button onClick={() => openEdit(sop)} className="text-slate-400 hover:text-slate-600 transition">编辑</button>
-                  <ToggleSwitch active={sop.active === 1} onToggle={() => handleToggle(sop)} />
+                  {sop.is_template ? (
+                    <button onClick={() => handleClone(sop)} className="text-blue-500 hover:text-blue-700 transition">使用</button>
+                  ) : (
+                    <>
+                      <button onClick={() => openEdit(sop)} className="text-slate-400 hover:text-slate-600 transition">编辑</button>
+                      <button onClick={() => handleDelete(sop)} className="text-rose-400 hover:text-rose-600 transition" title="删除此 SOP">
+                        <i className="fa-solid fa-trash text-xs" />
+                      </button>
+                      <ToggleSwitch active={sop.active === 1} onToggle={() => handleToggle(sop)} />
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -404,9 +509,13 @@ export default function SopView({ mode }: { mode: BizMode }) {
         </div>
       )}
 
-      {sops.length === 0 && (
+      {currentList.length === 0 && (
         <div className="bg-white rounded-2xl border border-slate-200/80 custom-shadow">
-          <Empty icon="fa-solid fa-bolt-lightning" title="暂无 SOP 策略流" description="点击右上角「新建自动化 SOP 规则」开始配置" />
+          <Empty
+            icon={viewTab === 'template' ? 'fa-solid fa-layer-group' : 'fa-solid fa-bolt-lightning'}
+            title={viewTab === 'template' ? '暂无系统模板' : '暂无 SOP 策略流'}
+            description={viewTab === 'template' ? '当前业务模式下暂无预置模板' : '点击右上角「新建自动化 SOP 规则」开始配置'}
+          />
         </div>
       )}
 
@@ -418,13 +527,27 @@ export default function SopView({ mode }: { mode: BizMode }) {
         subtitle={detail ? `触发条件: ${detail.trigger_desc}` : undefined}
         footer={detail ? (
           <div className="flex items-center gap-2">
-            <button onClick={() => openRun(detail)} disabled={!detail.active} className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 text-amber-700 rounded-lg text-xs font-medium transition">
-              <i className="fa-solid fa-play text-[10px] mr-1" />手动执行
-            </button>
-            <button onClick={() => handleClone(detail)} className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium transition">克隆</button>
-            <button onClick={() => { const s = detail; setDetail(null); openEdit(s) }} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition">编辑</button>
-            <button onClick={() => handleDelete(detail)} className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg text-xs font-medium transition">删除</button>
-            <ToggleSwitch active={detail.active === 1} onToggle={() => handleToggle(detail)} />
+            {detail.is_template ? (
+              <>
+                <div className="flex items-center gap-1 text-[11px] text-blue-600 bg-blue-50 border border-blue-200 px-2 py-1 rounded-md mr-auto">
+                  <i className="fa-solid fa-lock text-[10px]" />
+                  <span>系统模板 · 只读</span>
+                </div>
+                <button onClick={() => handleClone(detail)} className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium transition">
+                  <i className="fa-solid fa-copy text-[10px] mr-1" />使用此模板
+                </button>
+              </>
+            ) : (
+              <>
+                <button onClick={() => openRun(detail)} disabled={!detail.active} className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 text-amber-700 rounded-lg text-xs font-medium transition">
+                  <i className="fa-solid fa-play text-[10px] mr-1" />手动执行
+                </button>
+                <button onClick={() => handleClone(detail)} className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium transition">克隆</button>
+                <button onClick={() => { const s = detail; setDetail(null); openEdit(s) }} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition">编辑</button>
+                <button onClick={() => handleDelete(detail)} className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg text-xs font-medium transition">删除</button>
+                <ToggleSwitch active={detail.active === 1} onToggle={() => handleToggle(detail)} />
+              </>
+            )}
           </div>
         ) : null}
       >
@@ -557,6 +680,16 @@ export default function SopView({ mode }: { mode: BizMode }) {
                   <option value="service">B 端企服</option>
                 </select>
               </div>
+              {/* scope 下拉：仅 admin 可见；非 admin 由后端强制 scope=mine */}
+              {myMeta?.is_admin && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">作用域</label>
+                  <select value={editing.scope || 'mine'} onChange={e => setEditing({ ...editing, scope: e.target.value as 'all' | 'mine' })} className={inputCls}>
+                    <option value="all">🟢 全局系统（对全部客户生效）</option>
+                    <option value="mine">🔵 仅我的客户（私人顾问 SOP）</option>
+                  </select>
+                </div>
+              )}
               <div className="col-span-2">
                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">触发描述（自动填充可编辑）</label>
                 <input value={editing.trigger_desc} onChange={e => setEditing({ ...editing, trigger_desc: e.target.value })} placeholder="自定义可读触发描述" className={inputCls} />
