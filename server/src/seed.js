@@ -149,49 +149,87 @@ const broadcastSeed = [
   { title: '双十一预售定金膨胀提醒', type: '企业朋友圈', audience: '节日大促偏好客户分群', message: '定金翻倍最后3天！提前锁定全年低价，速抢~', target: 0, rate: 0, status: '待下发', day: 5 }
 ]
 
+// === SOP 种子数据（固化模板，所有字段完整）===
+// trigger_type: add_friend / first_purchase / days_inactive / high_value / chat_join / churn_warning / custom
+// steps 必须带 action + delay_days（按延迟天数依次下发）
 const sopSeed = [
   {
     name: '新客添加后48小时黄金首购转化SOP',
-    trigger: '企微好友通过验证立即激活',
+    trigger: '企微好友通过验证 → 首购后48小时内持续触达',
+    trigger_type: 'first_purchase',
+    trigger_days: 2,
+    trigger_min_spend: 0,
+    trigger_channel: null,
     runCount: 3240,
     conversion: 41.2,
+    active: 1,
+    mode: 'retail',
+    conditions: { op: 'AND', rules: [
+      { field: 'stage', op: '=', value: 'new' },
+      { field: 'orders', op: '=', value: 1 }
+    ]},
     steps: [
-      { phase: '步骤1 · 立即', title: '发送个性化欢迎语', detail: '新人首单券与护肤需求问卷自动推送', metric: '送达率99.8%' },
-      { phase: '步骤2 · 24小时后', title: '未用券跟进话术', detail: '针对未用券客户推送限时提醒与搭配建议', metric: '用券转化28.4%' },
-      { phase: '步骤3 · 48小时后', title: '精准拉入专属交流群', detail: '按肤质标签邀请进入对应打卡交流群', metric: '进群率61.5%' }
+      { phase: '步骤1 · 立即',   title: '发送个性化欢迎语',  detail: '新人首单券与护肤需求问卷自动推送',                     metric: '送达率99.8%', action: 'send_wechat',  delay_days: 0 },
+      { phase: '步骤2 · 24小时后', title: '未用券跟进话术',   detail: '针对未用券客户推送限时提醒与搭配建议',               metric: '用券转化28.4%', action: 'send_wechat',  delay_days: 1 },
+      { phase: '步骤3 · 48小时后', title: '精准拉入专属交流群', detail: '按肤质标签邀请进入对应打卡交流群',                   metric: '进群率61.5%',   action: 'invite_group', delay_days: 2 }
     ]
   },
   {
     name: '沉睡客户30天唤醒流',
     trigger: '客户超过30天未互动自动触发',
+    trigger_type: 'days_inactive',
+    trigger_days: 30,
+    trigger_min_spend: 0,
+    trigger_channel: null,
     runCount: 1860,
     conversion: 14.8,
+    active: 1,
+    mode: 'retail',
+    conditions: { op: 'AND', rules: [
+      { field: 'days_since_active', op: '>=', value: 30 }
+    ]},
     steps: [
-      { phase: '步骤1 · 第1天', title: '唤醒红包触达', detail: '发送专属唤醒红包吸引客户回访', metric: '打开率32.1%' },
-      { phase: '步骤2 · 第3天', title: '专属回归礼推送', detail: '推送无门槛回归券与新品试用装', metric: '回归率9.6%' },
-      { phase: '步骤3 · 第7天', title: '顾问1v1回访', detail: '人工电话回访收集流失原因', metric: '唤醒率14.8%' }
+      { phase: '步骤1 · 第1天', title: '唤醒红包触达',   detail: '发送专属唤醒红包吸引客户回访',       metric: '打开率32.1%', action: 'push_coupon', delay_days: 1 },
+      { phase: '步骤2 · 第3天', title: '专属回归礼推送', detail: '推送无门槛回归券与新品试用装',       metric: '回归率9.6%',  action: 'push_coupon', delay_days: 3 },
+      { phase: '步骤3 · 第7天', title: '顾问1v1回访',    detail: '人工电话回访收集流失原因',           metric: '唤醒率14.8%', action: 'phone_call',  delay_days: 7 }
     ]
   },
   {
     name: '高客单售后7天关怀流',
     trigger: '单笔订单金额≥500元自动触发',
+    trigger_type: 'first_purchase',
+    trigger_days: 0,
+    trigger_min_spend: 500,
+    trigger_channel: null,
     runCount: 2430,
     conversion: 99.1,
+    active: 1,
+    mode: 'retail',
+    conditions: { op: 'AND', rules: [
+      { field: 'spend', op: '>=', value: 500 }
+    ]},
     steps: [
-      { phase: '步骤1 · 签收当天', title: '发货签收关怀', detail: '推送签收提醒与正品验证指引', metric: '触达率98.5%' },
-      { phase: '步骤2 · 第3天', title: '使用指导推送', detail: '发送产品使用手法视频与搭配建议', metric: '打开率76.2%' },
-      { phase: '步骤3 · 第7天', title: '好评与晒单邀请', detail: '邀请评价晒单赠送双倍积分', metric: '好评率99.1%' }
+      { phase: '步骤1 · 签收当天', title: '发货签收关怀',   detail: '推送签收提醒与正品验证指引', metric: '触达率98.5%', action: 'send_wechat', delay_days: 0 },
+      { phase: '步骤2 · 第3天',    title: '使用指导推送',   detail: '发送产品使用手法视频与搭配建议', metric: '打开率76.2%', action: 'send_wechat', delay_days: 3 },
+      { phase: '步骤3 · 第7天',    title: '好评与晒单邀请', detail: '邀请评价晒单赠送双倍积分',     metric: '好评率99.1%', action: 'send_wechat', delay_days: 7 }
     ]
   },
   {
     name: '退群预警自动化挽回',
     trigger: '客户退群或社群活跃度骤降时触发',
+    trigger_type: 'days_inactive',
+    trigger_days: 7,
+    trigger_min_spend: 0,
+    trigger_channel: null,
     runCount: 960,
     conversion: 24.3,
+    active: 1,
+    mode: 'retail',
+    conditions: null,
     steps: [
-      { phase: '步骤1 · 退群即时', title: '挽回私信触达', detail: '推送退群挽留话术与回归礼', metric: '回复率41.2%' },
-      { phase: '步骤2 · 48小时后', title: '专属回归券下发', detail: '定向发放大额无门槛回归券', metric: '领券率58.7%' },
-      { phase: '步骤3 · 第5天', title: '顾问电话挽回', detail: '资深顾问一对一电话沟通挽回', metric: '挽回留存24.3%' }
+      { phase: '步骤1 · 退群即时', title: '挽回私信触达',   detail: '推送退群挽留话术与回归礼',     metric: '回复率41.2%', action: 'send_wechat', delay_days: 0 },
+      { phase: '步骤2 · 48小时后', title: '专属回归券下发', detail: '定向发放大额无门槛回归券',     metric: '领券率58.7%', action: 'push_coupon', delay_days: 2 },
+      { phase: '步骤3 · 第5天',    title: '顾问电话挽回',   detail: '资深顾问一对一电话沟通挽回',   metric: '挽回留存24.3%', action: 'phone_call',  delay_days: 5 }
     ]
   }
 ]
@@ -273,51 +311,80 @@ const serviceBroadcastSeed = [
 const serviceSopSeed = [
   {
     name: '高价值线索14天MQL到SQL深度赋能与商机推进SOP',
-    trigger: '官网白皮书留资、行业峰会名片、广告线索添加企微顾问',
+    trigger: '官网白皮书留资 / 行业峰会名片 / 广告线索添加企微顾问',
+    trigger_type: 'custom',
+    trigger_days: 0,
+    trigger_min_spend: 0,
+    trigger_channel: null,
     runCount: 890,
     conversion: 36.8,
     active: 1,
+    mode: 'service',
+    conditions: { op: 'AND', rules: [
+      { field: 'channel', op: 'in', value: ['weibo', 'ad', 'referral', 'offline'] },
+      { field: 'tags', op: 'contains', value: '白皮书' }
+    ]},
     steps: [
-      { phase: '步骤1 · 立即', title: '下发行业白皮书与调研', detail: '发送《2026行业数字化方案及案例集》附需求调研表单自动提取组织规模', metric: '触达率99.4%' },
-      { phase: '步骤2 · 24小时内', title: '顾问1v1预约诊断会', detail: '提醒顾问发起30分钟线上腾讯会议输出专属业务痛点与技术架构诊断报告', metric: '会议邀约率38.5%' },
-      { phase: '步骤3 · 第5天', title: '标杆客户视频与评级', detail: '根据白皮书停留阅读时长智能计算意向分自动触发大客户经理分配规则', metric: 'MQL晋级54.2%' },
-      { phase: '步骤4 · 第14天', title: '组建专家群与商务方案', detail: '联合技术总监与商务顾问建立专属对接群正式递交方案报价与POC测试', metric: '成单转化31.5%' }
+      { phase: '步骤1 · 立即',     title: '下发行业白皮书与调研',   detail: '发送《2026行业数字化方案及案例集》附需求调研表单自动提取组织规模',         metric: '触达率99.4%', action: 'send_wechat',  delay_days: 0 },
+      { phase: '步骤2 · 24小时内', title: '顾问1v1预约诊断会',      detail: '提醒顾问发起30分钟线上腾讯会议输出专属业务痛点与技术架构诊断报告',         metric: '会议邀约率38.5%', action: 'assign_staff', delay_days: 1 },
+      { phase: '步骤3 · 第5天',    title: '标杆客户视频与评级',      detail: '根据白皮书停留阅读时长智能计算意向分自动触发大客户经理分配规则',         metric: 'MQL晋级54.2%',   action: 'assign_staff', delay_days: 5 },
+      { phase: '步骤4 · 第14天',   title: '组建专家群与商务方案',    detail: '联合技术总监与商务顾问建立专属对接群正式递交方案报价与POC测试',         metric: '成单转化31.5%',  action: 'invite_group', delay_days: 14 }
     ]
   },
   {
     name: '大客户招投标与方案7天推进流',
     trigger: '客户进入招投标流程',
+    trigger_type: 'custom',
+    trigger_days: 0,
+    trigger_min_spend: 0,
+    trigger_channel: null,
     runCount: 210,
     conversion: 68.2,
     active: 1,
+    mode: 'service',
+    conditions: null,
     steps: [
-      { phase: '步骤1 · 当天', title: '招标文件解读与应标策略会', detail: '商务顾问联合技术总监拆解标书评分项，输出差异化应标策略', metric: '应标方案一次通过率92.3%' },
-      { phase: '步骤2 · 第3天', title: '定制方案与报价递交', detail: '按招标要求定制技术方案与分项报价，按时递交电子标书', metric: '按期递交率100%' },
-      { phase: '步骤3 · 第7天', title: '评标答疑与决策人沟通', detail: '邀约评标专家线上答疑，重点沟通采购决策人关注事项', metric: '中标率68.2%' }
+      { phase: '步骤1 · 当天',  title: '招标文件解读与应标策略会', detail: '商务顾问联合技术总监拆解标书评分项，输出差异化应标策略', metric: '应标方案一次通过率92.3%', action: 'assign_staff', delay_days: 0 },
+      { phase: '步骤2 · 第3天', title: '定制方案与报价递交',       detail: '按招标要求定制技术方案与分项报价，按时递交电子标书',     metric: '按期递交率100%',         action: 'send_wechat',  delay_days: 3 },
+      { phase: '步骤3 · 第7天', title: '评标答疑与决策人沟通',     detail: '邀约评标专家线上答疑，重点沟通采购决策人关注事项',       metric: '中标率68.2%',           action: 'assign_staff', delay_days: 7 }
     ]
   },
   {
     name: '沉睡企业线索60天专家沙龙激活流',
     trigger: '60天无互动的企业线索',
+    trigger_type: 'days_inactive',
+    trigger_days: 60,
+    trigger_min_spend: 0,
+    trigger_channel: null,
     runCount: 156,
     conversion: 21.4,
     active: 1,
+    mode: 'service',
+    conditions: { op: 'AND', rules: [
+      { field: 'days_since_active', op: '>=', value: 60 }
+    ]},
     steps: [
-      { phase: '步骤1 · 第1天', title: '沉睡线索分级盘点', detail: '按商机金额与行业自动筛选60天无互动企业线索，生成激活优先级名单', metric: '盘点覆盖率100%' },
-      { phase: '步骤2 · 第3天', title: '专家沙龙定向邀约', detail: '发送数字化增长闭门研讨沙龙邀请函，附行业最新政策解读资料', metric: '邀约回复率26.8%' },
-      { phase: '步骤3 · 第14天', title: '顾问一对一回访', detail: '顾问电话回访未响应线索，提供免费企业数字化健康度诊断', metric: '激活率21.4%' }
+      { phase: '步骤1 · 第1天',  title: '沉睡线索分级盘点',   detail: '按商机金额与行业自动筛选60天无互动企业线索，生成激活优先级名单', metric: '盘点覆盖率100%', action: 'send_wechat', delay_days: 1 },
+      { phase: '步骤2 · 第3天',  title: '专家沙龙定向邀约',   detail: '发送数字化增长闭门研讨沙龙邀请函，附行业最新政策解读资料',     metric: '邀约回复率26.8%', action: 'send_wechat', delay_days: 3 },
+      { phase: '步骤3 · 第14天', title: '顾问一对一回访',     detail: '顾问电话回访未响应线索，提供免费企业数字化健康度诊断',         metric: '激活率21.4%',     action: 'phone_call',  delay_days: 14 }
     ]
   },
   {
     name: '客户成功CSM 30/60/90天续约陪伴流',
     trigger: '交付验收完成',
+    trigger_type: 'custom',
+    trigger_days: 0,
+    trigger_min_spend: 0,
+    trigger_channel: null,
     runCount: 92,
     conversion: 94.6,
     active: 0,
+    mode: 'service',
+    conditions: null,
     steps: [
-      { phase: '步骤1 · 第30天', title: '交付效果复盘会', detail: 'CSM组织交付成果复盘，输出使用数据报告与优化建议', metric: '复盘出席率96.5%' },
-      { phase: '步骤2 · 第60天', title: '增值功能赋能培训', detail: '定向推送高阶功能培训与最佳实践案例，提升产品使用深度', metric: '功能活跃提升42.3%' },
-      { phase: '步骤3 · 第90天', title: '续约窗口期谈判启动', detail: '提前锁定续约条款，联合商务准备增值续约方案', metric: '续约率94.6%' }
+      { phase: '步骤1 · 第30天', title: '交付效果复盘会',         detail: 'CSM组织交付成果复盘，输出使用数据报告与优化建议',           metric: '复盘出席率96.5%',    action: 'send_wechat', delay_days: 30 },
+      { phase: '步骤2 · 第60天', title: '增值功能赋能培训',       detail: '定向推送高阶功能培训与最佳实践案例，提升产品使用深度',       metric: '功能活跃提升42.3%', action: 'send_wechat', delay_days: 60 },
+      { phase: '步骤3 · 第90天', title: '续约窗口期谈判启动',     detail: '提前锁定续约条款，联合商务准备增值续约方案',                 metric: '续约率94.6%',       action: 'assign_staff', delay_days: 90 }
     ]
   }
 ]
@@ -418,8 +485,14 @@ export function seedIfEmpty() {
     const insBc = db.prepare('INSERT INTO broadcasts (title, type, audience_desc, message, target_count, sent_rate, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
     for (const b of broadcastSeed) insBc.run(b.title, b.type, b.audience, b.message, b.target, b.rate, b.status, at(b.day, 10))
 
-    const insSop = db.prepare('INSERT INTO sops (name, trigger_desc, steps, run_count, conversion, active) VALUES (?, ?, ?, ?, ?, 1)')
-    for (const s of sopSeed) insSop.run(s.name, s.trigger, JSON.stringify(s.steps), s.runCount, s.conversion)
+    const insSop = db.prepare(`INSERT INTO sops
+      (name, trigger_desc, trigger_type, trigger_days, trigger_min_spend, trigger_channel, steps, conditions, run_count, conversion, active, mode, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    for (const s of sopSeed) insSop.run(
+      s.name, s.trigger, s.trigger_type, s.trigger_days, s.trigger_min_spend ?? 0, s.trigger_channel ?? null,
+      JSON.stringify(s.steps), s.conditions ? JSON.stringify(s.conditions) : null,
+      s.runCount, s.conversion, s.active ?? 1, s.mode ?? 'retail', at(30, 9)
+    )
 
     const insUser = db.prepare('INSERT INTO users (name, account, password_hash, business_mode, created_at) VALUES (?, ?, ?, ?, ?)')
     const adminSalt = crypto.randomBytes(16).toString('hex')
@@ -452,8 +525,14 @@ export function seedIfEmpty() {
     const insServiceBc = db.prepare("INSERT INTO broadcasts (title, type, audience_desc, message, target_count, sent_rate, status, created_at, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'service')")
     for (const b of serviceBroadcastSeed) insServiceBc.run(b.title, b.type, b.audience, b.message, b.target, b.rate, b.status, at(b.day, 10))
 
-    const insServiceSop = db.prepare('INSERT INTO sops (name, trigger_desc, steps, run_count, conversion, active, mode) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    for (const s of serviceSopSeed) insServiceSop.run(s.name, s.trigger, JSON.stringify(s.steps), s.runCount, s.conversion, s.active, 'service')
+    const insServiceSop = db.prepare(`INSERT INTO sops
+      (name, trigger_desc, trigger_type, trigger_days, trigger_min_spend, trigger_channel, steps, conditions, run_count, conversion, active, mode, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    for (const s of serviceSopSeed) insServiceSop.run(
+      s.name, s.trigger, s.trigger_type, s.trigger_days, s.trigger_min_spend ?? 0, s.trigger_channel ?? null,
+      JSON.stringify(s.steps), s.conditions ? JSON.stringify(s.conditions) : null,
+      s.runCount, s.conversion, s.active ?? 1, s.mode ?? "service", at(20, 10)
+    )
   })
   run()
   seedExtras()
