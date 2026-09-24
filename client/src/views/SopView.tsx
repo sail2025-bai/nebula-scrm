@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import { MODE_META, type BizMode, type Sop, type SopStep, type Coupon, type SopRun, type SopConditions, type ConditionField, type ConditionOperator } from '../types'
+import { MODE_META, type BizMode, type Sop, type SopStep, type Coupon, type SopRun, type SopConditions, type ConditionField, type ConditionOperator, type Tag } from '../types'
 import { useToast } from '../components/ui/Toast'
 import Empty from '../components/ui/Empty'
 import Modal from '../components/ui/Modal'
@@ -128,6 +128,8 @@ export default function SopView({ mode }: { mode: BizMode }) {
   const [runLimit, setRunLimit] = useState(10)
   const [coupons, setCoupons] = useState<Coupon[]>([])
   useEffect(() => { api.getCoupons(mode).then(setCoupons).catch(() => {}) }, [mode])
+  const [tags, setTags] = useState<Tag[]>([])
+  useEffect(() => { api.getTags(mode).then(setTags).catch(() => {}) }, [mode])
   const [runningSop, setRunningSop] = useState<Sop | null>(null)
   const [runBusy, setRunBusy] = useState(false)
 
@@ -629,6 +631,34 @@ export default function SopView({ mode }: { mode: BizMode }) {
                               <option key={c.id} value={c.id}>#{c.id} {c.name} · {c.type === 'cash' ? '￥' : c.type === 'percent' ? '%' : ''}{c.value} · 库存 {c.total_stock - c.issued_count}/{c.total_stock}</option>
                             ))}
                           </select>
+                        </div>
+                      )}
+                      {(step.action === 'note_mark' || step.action === 'add_tag') && (
+                        <div className="col-span-2">
+                          <label className="block text-[11px] text-slate-500 mb-1">
+                            打标配置 <span className="text-emerald-500">（指定标签名，不存在会自动创建）</span>
+                          </label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <select
+                              value={step.tag_name || ''}
+                              onChange={e => updateStep(idx, { tag_name: e.target.value })}
+                              className={inputCls}
+                            >
+                              <option value="">— 选择已有标签 —</option>
+                              {tags.map(t => (
+                                <option key={t.id} value={t.name}>{t.name}{t.category ? ` · ${t.category}` : ''}</option>
+                              ))}
+                            </select>
+                            <input
+                              placeholder="或手动输入新标签名"
+                              value={step.tag_name || ''}
+                              onChange={e => updateStep(idx, { tag_name: e.target.value })}
+                              className={inputCls}
+                            />
+                          </div>
+                          {!step.tag_name && (
+                            <p className="text-[10px] text-amber-500 mt-1">⚠️ 未指定标签名，后端会自动按步骤标题生成一个兜底标签</p>
+                          )}
                         </div>
                       )}
                     </div>

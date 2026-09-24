@@ -307,6 +307,7 @@ export interface SopStep {
   action?: string
   delay_days?: number
   coupon_id?: number
+  tag_name?: string
 }
 
 export interface SopRun {
