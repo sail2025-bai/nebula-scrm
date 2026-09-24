@@ -443,9 +443,23 @@ function initSchema() {
   try { db.prepare('ALTER TABLE orders ADD COLUMN product_image TEXT').run() } catch {}
   try { db.prepare('ALTER TABLE orders ADD COLUMN product_name TEXT').run() } catch {}
 
+  // customers 补 updated_at（前端/管理后台常更新此字段）
+  try { db.prepare('ALTER TABLE customers ADD COLUMN updated_at TEXT').run() } catch {}
+
+  // segments 补 snapshot 字段（MCP snapshot_segment tool 依赖）
+  try { db.prepare('ALTER TABLE segments ADD COLUMN snapshot TEXT').run() } catch {}
+  try { db.prepare('ALTER TABLE segments ADD COLUMN snapshot_count INTEGER DEFAULT 0').run() } catch {}
+  try { db.prepare('ALTER TABLE segments ADD COLUMN snapshot_at TEXT').run() } catch {}
+
+  // broadcasts 补 sent_at / fail_reason
+  try { db.prepare('ALTER TABLE broadcasts ADD COLUMN sent_at TEXT').run() } catch {}
+  try { db.prepare('ALTER TABLE broadcasts ADD COLUMN fail_reason TEXT').run() } catch {}
+
   // === 首次启动时 seed 示例订单 ===
   const orderCount = db.prepare('SELECT COUNT(*) AS n FROM orders').get().n
   if (orderCount === 0) {
+    // seed 时 customers 可能还是空表，暂时关闭外键约束
+    db.pragma('foreign_keys = OFF')
     const seedOrders = [
       { customer_id: 1, order_no: 'TM20260923001', amount: 199.9, paid_amount: 179.9, discount: 20, coupon_code: 'CP9F3K2026', source: 'coupon', status: 'completed', product_name: '美诺精华液 30ml', product_image: 'https://img.icons8.com/color/96/makeup-bag.png', days_ago: 1 },
       { customer_id: 1, order_no: 'SK20260922008', amount: 599.0, paid_amount: 599.0, discount: 0, coupon_code: null, source: 'seckill', status: 'shipped', product_name: '小棕瓶精华 50ml 限时秒杀', product_image: 'https://img.icons8.com/color/96/perfume.png', days_ago: 2 },
@@ -475,7 +489,41 @@ function initSchema() {
       spend = (SELECT COALESCE(SUM(paid_amount),0) FROM orders WHERE orders.customer_id = customers.id),
       orders = (SELECT COUNT(*) FROM orders WHERE orders.customer_id = customers.id)
     `).run()
+    db.pragma('foreign_keys = ON')
   }
+
+  // customers 补 ext_openid（视频号 openid 匹配用）
+  try { db.prepare('ALTER TABLE customers ADD COLUMN ext_openid TEXT').run() } catch {}
+
+  // === C3: API 开放平台 — api_tokens（独立于 users/JWT，用于外部 ERP/CRM 对接）===
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS api_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      token_hash TEXT UNIQUE NOT NULL,
+      token_prefix TEXT NOT NULL,
+      scopes TEXT NOT NULL DEFAULT 'read',
+      rate_limit INTEGER DEFAULT 60,
+      last_used_at TEXT,
+      expires_at TEXT,
+      revoked_at TEXT,
+      revoked_reason TEXT,
+      created_by INTEGER REFERENCES users(id),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`).run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash)').run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_api_tokens_prefix ON api_tokens(token_prefix)').run() } catch {}
+
+  // C3: 开放平台调用审计
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS api_audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token_id INTEGER REFERENCES api_tokens(id),
+      method TEXT,
+      path TEXT,
+      status INTEGER,
+      duration_ms INTEGER,
+      ip TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`).run() } catch {}
 }
 
 function pad(n) {
@@ -486,7 +534,7 @@ export function fmt(dt) {
   return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`
 }
 
-export function dayKey(dt) {
+export function dayKey(dt = new Date()) {
   return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`
 }
 
@@ -529,36 +577,3 @@ export function buildSegmentWhere(cond) {
 }
 
 export { db, initSchema }
-
-  // customers 补 ext_openid（视频号 openid 匹配用）
-  try { db.prepare('ALTER TABLE customers ADD COLUMN ext_openid TEXT').run() } catch {}
-
-  // === C3: API 开放平台 — api_tokens（独立于 users/JWT，用于外部 ERP/CRM 对接）===
-  try { db.prepare(`CREATE TABLE IF NOT EXISTS api_tokens (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      token_hash TEXT UNIQUE NOT NULL,
-      token_prefix TEXT NOT NULL,
-      scopes TEXT NOT NULL DEFAULT 'read',
-      rate_limit INTEGER DEFAULT 60,
-      last_used_at TEXT,
-      expires_at TEXT,
-      revoked_at TEXT,
-      revoked_reason TEXT,
-      created_by INTEGER REFERENCES users(id),
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`).run() } catch {}
-  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash)').run() } catch {}
-  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_api_tokens_prefix ON api_tokens(token_prefix)').run() } catch {}
-
-  // C3: 开放平台调用审计（可选项，记录每次 API token 的调用）
-  try { db.prepare(`CREATE TABLE IF NOT EXISTS api_audit_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      token_id INTEGER REFERENCES api_tokens(id),
-      method TEXT,
-      path TEXT,
-      status INTEGER,
-      duration_ms INTEGER,
-      ip TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`).run() } catch {}

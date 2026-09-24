@@ -32,6 +32,7 @@ import ordersRouter from './routes/orders.js'
 import msgauditRouter from './routes/msgaudit.js'
 import reportsRouter from './routes/reports.js'
 import openapiRouter, { tokenRouter } from './routes/openapi.js'
+import mcpRouter from './mcp-http.js'
 
 const app = express()
 
@@ -125,7 +126,11 @@ app.use('/api/orders', ordersRouter)      // 包含 /webhook/channels-shop
 // ④ C3: OpenAPI 规范（公开，方便 ERP/CRM 对接方查看）+ C2: Analytics Builder（路由内部再用 requireAuth）
 app.use('/api', openapiRouter)
 
-// ⑤ JWT 鉴权关口 —— 之后所有路由必须 Bearer token
+// ⑤ MCP HTTP 入口（走自身 Bearer token 鉴权，不依赖 JWT）
+//    StreamableHTTP + SSE 双协议，支持豆包/火山方舟/Dify 远程调用
+app.use('/api/mcp', mcpRouter)
+
+// ⑥ JWT 鉴权关口 —— 之后所有路由必须 Bearer token
 app.use(requireAuth)
 
 // ⑤ 受保护的业务路由
