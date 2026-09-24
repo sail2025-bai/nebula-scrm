@@ -5,6 +5,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { processPendingEvents, rescanAllCustomerStages } from './utils/events.js'
+import { runOnce as runChatConsumer } from './utils/chat-consumer.js'
+import { runDailyReport } from './utils/daily-report.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -61,6 +63,11 @@ export function startScheduler() {
     pollMsgAudit().catch((e) => log('scheduler', 'error', `msgaudit poll: ${e.message}`))
   }, 5 * 60 * 1000))
 
+  // F2：每 3 分钟消费 chat_messages：关键词打标 + 未回复提醒
+  timers.push(setInterval(() => {
+    try { runChatConsumer() } catch (e) { log('scheduler', 'error', `[chat-consumer] 异常: ${e.message}`) }
+  }, 3 * 60 * 1000))
+
   // G：每 1 分钟扫 events 表（A1 事件总线 → SOP / 客户分级）
   timers.push(setInterval(() => {
     try {
@@ -99,7 +106,28 @@ export function startScheduler() {
   }
   scheduleMidnightZero()
 
-  log('scheduler', 'info', `调度器已启动：会话存档轮询(5min) + 每日归零(递归)`)
+  // J：每日 08:00 自动生成运营日报（B1）
+  //   写 wecom_events 表让后续推送通道消费；REST /api/reports/daily 也能手动拉
+  function scheduleDailyReport() {
+    const now = new Date()
+    const next = new Date(now)
+    next.setHours(8, 0, 0, 0)
+    if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1)
+    const ms = next.getTime() - now.getTime()
+    const handle = setTimeout(() => {
+      try {
+        runDailyReport()
+      } catch (e) {
+        log('scheduler', 'error', `[日报] 生成失败: ${e.message}`)
+      } finally {
+        scheduleDailyReport()
+      }
+    }, ms + 1000)
+    timers.push(handle)
+  }
+  scheduleDailyReport()
+
+  log('scheduler', 'info', `调度器已启动：会话存档轮询(5min) + 每日归零(递归) + 每日日报(递归)`)
 }
 
 export function stopScheduler() {

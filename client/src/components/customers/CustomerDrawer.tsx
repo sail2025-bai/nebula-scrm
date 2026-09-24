@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api'
-import type { BizMode, Customer, FollowUp, Order, Tag } from '../../types'
+import type { BizMode, Customer, CustomerTimelineEntry, FollowUp, Order, Tag } from '../../types'
 import { FOLLOWUP_TYPES, MODE_META, STAGE_META_BY_MODE } from '../../types'
 import { formatDateTime, formatMoney, healthColor } from '../../utils'
 import Avatar from '../ui/Avatar'
@@ -31,8 +31,7 @@ interface CustomerDrawerProps {
 export default function CustomerDrawer({ customerId, mode, onClose, onChanged }: CustomerDrawerProps) {
   const { showToast } = useToast()
   const [customer, setCustomer] = useState<Customer | null>(null)
-  const [followUps, setFollowUps] = useState<FollowUp[]>([])
-  const [orders, setOrders] = useState<Order[]>([])
+  const [timeline, setTimeline] = useState<CustomerTimelineEntry[]>([])
   const [tagLibrary, setTagLibrary] = useState<Tag[]>([])
   const [editOpen, setEditOpen] = useState(false)
   const [addTagOpen, setAddTagOpen] = useState(false)
@@ -45,10 +44,12 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
   const fetchDetail = useCallback(
     async (id: number) => {
       try {
-        const [c, fs, os] = await Promise.all([api.getCustomer(id), api.getFollowUps(id), api.getCustomerOrders(id).catch(() => [])])
+        const [c, tl] = await Promise.all([
+          api.getCustomer(id),
+          api.getCustomerTimeline(id).catch(() => ({ count: 0, timeline: [] }))
+        ])
         setCustomer(c)
-        setFollowUps(fs)
-        setOrders(os)
+        setTimeline(tl.timeline || [])
       } catch (e) {
         showToast((e as Error).message, 'warning')
       }
@@ -59,8 +60,7 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
   useEffect(() => {
     if (customerId === null) {
       setCustomer(null)
-      setFollowUps([])
-      setOrders([])
+      setTimeline([])
       setEditOpen(false)
       setAddTagOpen(false)
       setCustomTag('')
@@ -71,7 +71,7 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
       return
     }
     setCustomer(null)
-    setFollowUps([])
+    setTimeline([])
     fetchDetail(customerId)
   }, [customerId, fetchDetail])
 
@@ -136,11 +136,11 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
     }
   }
 
-  const handleDeleteFollowUp = async (f: FollowUp) => {
+  const handleDeleteFollowUp = async (followupId: number) => {
     if (!customer) return
     if (!window.confirm('确定删除这条跟进记录吗？')) return
     try {
-      await api.deleteFollowUp(f.id)
+      await api.deleteFollowUp(followupId)
       showToast('跟进记录已删除')
       await fetchDetail(customer.id)
       onChanged()
@@ -162,46 +162,10 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
     }
   }
 
-  const sortedFollowUps = [...followUps].sort((a, b) => parseTs(b.created_at) - parseTs(a.created_at))
+  const sortedFollowUps = timeline.filter((e) => e.kind === 'followup')
 
-  interface TimelineEntry {
-    time: string
-    title: string
-    detail: string
-    source: string
-    color: string
-    icon?: string
-    amount?: number
-    status_color?: string
-  }
-  const timeline: TimelineEntry[] = customer
-    ? [
-        {
-          time: customer.created_at,
-          title: `通过 ${customer.channel} 添加企微好友`,
-          detail: '',
-          source: customer.channel,
-          color: 'bg-slate-400'
-        },
-        ...followUps.map((f) => ({
-          time: f.created_at,
-          title: f.content,
-          detail: f.outcome ?? '',
-          source: FOLLOWUP_TYPES[f.type].label,
-          color: TYPE_DOTS[f.type]
-        })),
-        ...orders.map((o) => ({
-          time: o.order_at,
-          title: `${o.source_label || o.source} · ${o.product_name || '商品订单'}`,
-          detail: `¥${o.paid_amount.toFixed(2)} · ${o.status_label || o.status} · 单号 ${o.order_no}${o.discount > 0 ? ' · 优惠 ¥' + o.discount.toFixed(2) : ''}${o.coupon_code ? ' · 券码 ' + o.coupon_code : ''}`,
-          source: '订单',
-          color: 'bg-amber-500',
-          icon: 'fa-solid fa-cart-shopping',
-          amount: o.paid_amount,
-          status_color: o.status_color
-        }))
-      ].sort((a, b) => parseTs(b.time) - parseTs(a.time))
-    : []
+  // timeline 已是后端 UNION ALL 多源（order/event/followup），按 time DESC 排好
+  const orderedTimeline = [...timeline].sort((a, b) => parseTs(b.time) - parseTs(a.time))
 
   const inputCls =
     'w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-emerald-500 focus:outline-none transition'
@@ -422,33 +386,40 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
                 </div>
               </div>
               <div className="mt-3 space-y-2">
-                {sortedFollowUps.map((f) => (
-                  <div key={f.id} className="border border-slate-100 rounded-xl p-3 bg-slate-50/60">
+                {sortedFollowUps.map((f) => {
+                  const fuType = (f.source || 'note') as FollowUp['type']
+                  const meta = FOLLOWUP_TYPES[fuType] ?? FOLLOWUP_TYPES.note
+                  const fuId = Number(f.extra) || 0
+                  return (
+                  <div key={`fu-${fuId || f.time}`} className="border border-slate-100 rounded-xl p-3 bg-slate-50/60">
                     <div className="flex items-center justify-between gap-2">
                       <span
-                        className={`inline-flex items-center gap-1.5 text-xs font-semibold ${FOLLOWUP_TYPES[f.type].color}`}
+                        className={`inline-flex items-center gap-1.5 text-xs font-semibold ${meta.color}`}
                       >
-                        <i className={FOLLOWUP_TYPES[f.type].icon} />
-                        {FOLLOWUP_TYPES[f.type].label}
+                        <i className={meta.icon} />
+                        {meta.label}
                       </span>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-400">{formatDateTime(f.created_at)}</span>
+                        <span className="text-[10px] text-slate-400">{formatDateTime(f.time)}</span>
+                        {fuId > 0 && (
                         <button
-                          onClick={() => handleDeleteFollowUp(f)}
+                          onClick={() => handleDeleteFollowUp(fuId)}
                           className="w-6 h-6 rounded-md flex items-center justify-center text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition"
                         >
                           <i className="fa-regular fa-trash-can text-[11px]" />
                         </button>
+                        )}
                       </div>
                     </div>
-                    <p className="text-xs text-slate-700 mt-1.5 leading-relaxed">{f.content}</p>
-                    {f.outcome && (
+                    <p className="text-xs text-slate-700 mt-1.5 leading-relaxed">{f.title}</p>
+                    {f.detail && (
                       <span className="inline-flex mt-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
-                        结果: {f.outcome}
+                        结果: {f.detail}
                       </span>
                     )}
                   </div>
-                ))}
+                  )
+                })}
                 {sortedFollowUps.length === 0 && (
                   <div className="text-[11px] text-slate-400 text-center py-3">暂无跟进记录</div>
                 )}
@@ -458,22 +429,22 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
             <div>
               <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">全渠道互动旅程</h4>
               <div className="relative pl-6 space-y-5 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
-                {timeline.map((e, i) => (
+                {orderedTimeline.map((e, i) => (
                   <div key={i} className="relative">
                     <div className={`absolute -left-6 top-1 w-2.5 h-2.5 rounded-full ${e.color} ring-4 ring-white`} />
                     <div className="text-xs font-semibold text-slate-800 line-clamp-1 flex items-center gap-1.5">
                       {e.icon && <i className={`${e.icon} text-[10px] text-amber-600`} />}
                       <span>{e.title}</span>
-                      {e.amount !== undefined && (
+                      {e.amount != null && (
                         <span className="ml-auto text-[11px] font-bold text-rose-600 shrink-0">¥{e.amount.toFixed(2)}</span>
                       )}
                     </div>
                     {e.detail && (
                       <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap">
                         <span>{e.detail}</span>
-                        {e.status_color && (
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${e.status_color}`}>
-                            {e.detail.split('·').slice(0, 0).join()}
+                        {e.color && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${e.color}`}>
+                            {e.kind === 'order' ? '订单' : e.kind === 'event' ? '事件' : e.kind === 'followup' ? '跟进' : 'SOP'}
                           </span>
                         )}
                       </div>
@@ -483,7 +454,7 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
                     </div>
                   </div>
                 ))}
-                {timeline.length === 0 && (
+                {orderedTimeline.length === 0 && (
                   <div className="text-[11px] text-slate-400">暂无互动旅程数据</div>
                 )}
               </div>

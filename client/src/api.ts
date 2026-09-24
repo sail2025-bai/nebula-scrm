@@ -28,7 +28,8 @@ import type {
   WecomStatus,
   Order,
   OrderStatus,
-  MsgAuditStatus
+  MsgAuditStatus,
+  CustomerTimelineEntry
 } from './types'
 
 // === JWT 令牌管理 ===
@@ -134,6 +135,8 @@ export const api = {
 
   getCustomers: (query: CustomerQuery) => request<CustomerListResponse>(`/customers${toQuery(query)}`),
   getCustomer: (id: number) => request<Customer>(`/customers/${id}`),
+  getCustomerTimeline: (id: number) =>
+    request<{ count: number; timeline: CustomerTimelineEntry[] }>(`/customers/${id}/timeline`),
   createCustomer: (payload: CustomerPayload) =>
     request<Customer>('/customers', { method: 'POST', body: JSON.stringify(payload) }),
   updateCustomer: (id: number, payload: Partial<CustomerPayload>) =>

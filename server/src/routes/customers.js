@@ -163,6 +163,76 @@ router.post('/', (req, res) => {
   }
 })
 
+// === 客户360时间线（多源 UNION ALL 统一成 TimelineEntry 结构）===
+router.get('/:id/timeline', (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'id 非法' })
+  const c = db.prepare('SELECT id FROM customers WHERE id = ?').get(id)
+  if (!c) return res.status(404).json({ error: '客户不存在' })
+
+  // events 表里的 sop_run 已包含 coupon_issued / note_mark 等触发，不需要再 JOIN sop_runs
+  const timeline = db.prepare(`
+    SELECT * FROM (
+      SELECT
+        o.order_at AS ts, 'order' AS kind,
+        COALESCE(o.product_name, '商品订单') AS title,
+        printf('¥%.2f · %s · 单号 %s', COALESCE(o.paid_amount, 0), o.status, o.order_no) AS detail,
+        o.source AS source, o.paid_amount AS amount, NULL AS extra
+      FROM orders o WHERE o.customer_id = ?
+
+      UNION ALL
+
+      SELECT e.created_at AS ts, 'event' AS kind,
+        CASE e.type
+          WHEN 'order_created' THEN '订单创建'
+          WHEN 'order_paid' THEN '订单支付'
+          WHEN 'order_shipped' THEN '订单发货'
+          WHEN 'order_completed' THEN '订单完成'
+          WHEN 'order_cancelled' THEN '订单取消'
+          WHEN 'order_refunded' THEN '订单退款'
+          WHEN 'customer_created' THEN '新客户建档'
+          WHEN 'add_friend' THEN '新增企微好友'
+          WHEN 'chat_join' THEN '加入群聊'
+          WHEN 'chat_keyword' THEN '群聊关键词触发'
+          WHEN 'chat_need_reply' THEN '群聊未回复预警'
+          WHEN 'coupon_issued' THEN '优惠券发放'
+          WHEN 'coupon_redeemed' THEN '优惠券核销'
+          WHEN 'customer_stage_changed' THEN '客户阶段变更'
+          ELSE e.type
+        END AS title,
+        substr(COALESCE(e.payload, ''), 1, 200) AS detail,
+        '事件总线' AS source, NULL AS amount, e.type AS extra
+      FROM events e WHERE e.customer_id = ?
+
+      UNION ALL
+
+      SELECT f.created_at AS ts, 'followup' AS kind, f.content AS title,
+        COALESCE(f.outcome, '') AS detail, f.type AS source, NULL AS amount, CAST(f.id AS TEXT) AS extra
+      FROM follow_ups f WHERE f.customer_id = ?
+    )
+    ORDER BY ts DESC LIMIT 100
+  `).all(id, id, id).map((r) => ({
+    time: r.ts,
+    kind: r.kind,
+    title: r.title,
+    detail: r.detail,
+    source: r.source,
+    amount: r.amount,
+    extra: r.extra,
+    icon: kindToIcon(r.kind),
+    color: kindToColor(r.kind)
+  }))
+
+  res.json({ count: timeline.length, timeline })
+})
+
+function kindToIcon(kind) {
+  return { order: 'fa-solid fa-cart-shopping', event: 'fa-solid fa-bolt', followup: 'fa-solid fa-comment-dots', sop: 'fa-solid fa-wand-magic-sparkles' }[kind] || 'fa-solid fa-circle'
+}
+function kindToColor(kind) {
+  return { order: 'bg-amber-500', event: 'bg-purple-500', followup: 'bg-sky-500', sop: 'bg-emerald-500' }[kind] || 'bg-slate-400'
+}
+
 router.get('/:id', (req, res) => {
   const id = Number(req.params.id)
   const d = Number.isInteger(id) ? detail(id) : null

@@ -30,6 +30,8 @@ import publicRouter from './routes/public.js'
 import extRouter from './routes/ext.js'
 import ordersRouter from './routes/orders.js'
 import msgauditRouter from './routes/msgaudit.js'
+import reportsRouter from './routes/reports.js'
+import openapiRouter, { tokenRouter } from './routes/openapi.js'
 
 const app = express()
 
@@ -120,7 +122,10 @@ app.use('/api/ext', extRouter)
 app.use('/api/wecom', wecomRouter)         // 包含 /webhook
 app.use('/api/orders', ordersRouter)      // 包含 /webhook/channels-shop
 
-// ④ JWT 鉴权关口 —— 之后所有路由必须 Bearer token
+// ④ C3: OpenAPI 规范（公开，方便 ERP/CRM 对接方查看）+ C2: Analytics Builder（路由内部再用 requireAuth）
+app.use('/api', openapiRouter)
+
+// ⑤ JWT 鉴权关口 —— 之后所有路由必须 Bearer token
 app.use(requireAuth)
 
 // ⑤ 受保护的业务路由
@@ -139,6 +144,10 @@ app.use('/api/backup', backupRouter)
 app.use('/api/coupons', couponsRouter)
 app.use('/api/seckill', seckillRouter)
 app.use('/api/msgaudit', msgauditRouter)
+app.use('/api/reports', reportsRouter)
+
+// --- C3: 内部 Token 管理（走 JWT 鉴权，必须在 requireAuth 之后）---
+app.use('/api/auth', tokenRouter)
 
 // --- 前端生产构建静态托管（单进程一体化）---
 import path from 'node:path'

@@ -532,3 +532,33 @@ export { db, initSchema }
 
   // customers 补 ext_openid（视频号 openid 匹配用）
   try { db.prepare('ALTER TABLE customers ADD COLUMN ext_openid TEXT').run() } catch {}
+
+  // === C3: API 开放平台 — api_tokens（独立于 users/JWT，用于外部 ERP/CRM 对接）===
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS api_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      token_hash TEXT UNIQUE NOT NULL,
+      token_prefix TEXT NOT NULL,
+      scopes TEXT NOT NULL DEFAULT 'read',
+      rate_limit INTEGER DEFAULT 60,
+      last_used_at TEXT,
+      expires_at TEXT,
+      revoked_at TEXT,
+      revoked_reason TEXT,
+      created_by INTEGER REFERENCES users(id),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`).run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash)').run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_api_tokens_prefix ON api_tokens(token_prefix)').run() } catch {}
+
+  // C3: 开放平台调用审计（可选项，记录每次 API token 的调用）
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS api_audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token_id INTEGER REFERENCES api_tokens(id),
+      method TEXT,
+      path TEXT,
+      status INTEGER,
+      duration_ms INTEGER,
+      ip TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`).run() } catch {}

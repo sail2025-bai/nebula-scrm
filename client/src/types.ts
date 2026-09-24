@@ -530,3 +530,17 @@ export interface Order {
   completed_at: string | null
   created_at: string
 }
+
+
+// 客户360 时间线（多源 UNION ALL：order + event + followup）
+export interface CustomerTimelineEntry {
+  time: string
+  kind: 'order' | 'event' | 'followup' | 'sop'
+  title: string
+  detail: string
+  source: string
+  amount?: number | null
+  extra?: string | null
+  icon?: string
+  color?: string
+}
