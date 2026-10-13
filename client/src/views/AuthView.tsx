@@ -1,11 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, setToken } from '../api'
-import { MODE_META, type AuthUser, type BizMode } from '../types'
-
-const MODE_OPTIONS: { value: BizMode; icon: string; iconColor: string; desc: string }[] = [
-  { value: 'retail', icon: 'fa-solid fa-cart-shopping', iconColor: 'text-emerald-600', desc: '个人消费者 · 会员运营 · 电商零售' },
-  { value: 'service', icon: 'fa-solid fa-briefcase', iconColor: 'text-blue-600', desc: '企业客户 · 销售线索 · 大客户商机' }
-]
+import { MODE_META, type AuthUser } from '../types'
 
 const inputClass =
   'w-full pl-9 pr-3 py-2.5 text-sm bg-slate-100 border border-transparent rounded-lg focus:bg-white focus:border-emerald-500 focus:outline-none transition'
@@ -37,7 +32,6 @@ export default function AuthView({ onAuth }: { onAuth: (user: AuthUser) => void 
   const [account, setAccount] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [businessMode, setBusinessMode] = useState<BizMode | null>(null)
 
   const sidebarCode = useMemo(() => detectSidebarCode(), [])
   const inWecom = useMemo(() => isInWecomWebview(), [])
@@ -89,17 +83,15 @@ export default function AuthView({ onAuth }: { onAuth: (user: AuthUser) => void 
     else if (password.length < 6) next.password = '密码长度至少 6 位'
     if (!confirmPassword) next.confirmPassword = '请再次输入密码'
     else if (password !== confirmPassword) next.confirmPassword = '两次输入的密码不一致'
-    if (!businessMode) next.businessMode = '请选择业务模式'
     setErrors(next)
-    if (Object.keys(next).length > 0 || !businessMode) return
+    if (Object.keys(next).length > 0) return
     setLoading(true)
     setApiError('')
     try {
       const { user, token } = await api.register({
         name: name.trim(),
         account: account.trim(),
-        password,
-        businessMode
+        password
       })
       setToken(token, user)
       onAuth(user)
@@ -132,7 +124,7 @@ export default function AuthView({ onAuth }: { onAuth: (user: AuthUser) => void 
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 text-white flex items-center justify-center shadow-md shadow-emerald-200">
             <i className="fa-solid fa-users-viewfinder text-xl" />
           </div>
-          <h1 className="mt-3 text-lg font-bold text-slate-900 tracking-tight">星云企微SCRM</h1>
+          <h1 className="mt-3 text-lg font-bold text-slate-900 tracking-tight">逸云企微SCRM</h1>
           <p className="mt-1 text-xs text-slate-400 tracking-wide">私域全链路增长引擎</p>
         </div>
 
@@ -341,32 +333,6 @@ export default function AuthView({ onAuth }: { onAuth: (user: AuthUser) => void 
                 />
               </div>
               {errors.confirmPassword && <p className="mt-1 text-xs text-rose-600">{errors.confirmPassword}</p>}
-            </div>
-            <div>
-              <div className="mb-1.5 text-xs font-medium text-slate-600">选择业务模式</div>
-              <p className="mb-2 text-[10px] text-slate-400">决定进入系统后的默认视图，注册后可随时切换</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {MODE_OPTIONS.map((opt) => {
-                  const selected = businessMode === opt.value
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => setBusinessMode(opt.value)}
-                      className={`text-left p-3 rounded-xl border transition ${
-                        selected
-                          ? 'border-emerald-500 bg-emerald-50/50 ring-1 ring-emerald-500'
-                          : 'border-slate-200 hover:border-emerald-300'
-                      }`}
-                    >
-                      <i className={`${opt.icon} ${opt.iconColor} text-sm`} />
-                      <div className="mt-2 text-xs font-semibold text-slate-800">{MODE_META[opt.value].label}</div>
-                      <div className="mt-0.5 text-[10px] text-slate-400">{opt.desc}</div>
-                    </button>
-                  )
-                })}
-              </div>
-              {errors.businessMode && <p className="mt-1 text-xs text-rose-600">{errors.businessMode}</p>}
             </div>
             <button
               type="submit"

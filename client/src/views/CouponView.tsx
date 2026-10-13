@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import { MODE_META, type BizMode, type Coupon, type CouponIssue } from '../types'
+import { MODE_META, type Coupon, type CouponIssue } from '../types'
 import { useToast } from '../components/ui/Toast'
 import Empty from '../components/ui/Empty'
 import Modal from '../components/ui/Modal'
@@ -46,14 +46,13 @@ function normalizeChannel(ch: string | undefined | null): { label: string; emoji
   return { label: ch, emoji: '🏷️' }
 }
 
-export default function CouponView({ mode }: { mode: BizMode }) {
+export default function CouponView({onPrefillQr }: {  onPrefillQr?: (payload: { target_type: 'coupon'; target_id: number; suggestName: string }) => void }) {
   const toast = useToast()
   const [list, setList] = useState<Coupon[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [detail, setDetail] = useState<Coupon | null>(null)
   const [filter, setFilter] = useState<'all' | 'active' | 'paused' | 'out'>('all')
-  const [qrModal, setQrModal] = useState<{ couponId: number; couponName: string; url: string; qrUrl: string } | null>(null)
 
   const defaultForm: CouponForm = useMemo(() => ({
     name: '', type: 'cash', value: 10, min_order: 50, description: '',
@@ -67,7 +66,7 @@ export default function CouponView({ mode }: { mode: BizMode }) {
   async function load() {
     setLoading(true)
     try {
-      const arr = await api.getCoupons(mode)
+      const arr = await api.getCoupons()
       setList(arr)
     } catch (e: any) {
       toast.showToast(e.message || '加载失败', "warning")
@@ -76,7 +75,7 @@ export default function CouponView({ mode }: { mode: BizMode }) {
     }
   }
 
-  useEffect(() => { load() }, [mode])
+  useEffect(() => { load() }, [])
 
   const filtered = list.filter(c => {
     if (filter === 'active') return c.active === 1
@@ -100,7 +99,7 @@ export default function CouponView({ mode }: { mode: BizMode }) {
       await api.createCoupon({
         name: form.name.trim(), type: form.type, value: form.value,
         min_order: form.min_order, description: form.description,
-        total_stock: form.total_stock, mode,
+        total_stock: form.total_stock,
         start_at: form.start_at.replace('T', ' '), end_at: form.end_at.replace('T', ' ')
       })
       toast.showToast('券模板创建成功', "success")
@@ -118,7 +117,7 @@ export default function CouponView({ mode }: { mode: BizMode }) {
   }
 
   async function handleDelete(id: number) {
-    if (!confirm('确认删除券模板？历史发放记录保留不删。')) return
+    if (!(await window.confirm('确认删除券模板？历史发放记录保留不删。'))) return
     try {
       await api.deleteCoupon(id)
       toast.showToast('已删除', "success")
@@ -135,7 +134,9 @@ export default function CouponView({ mode }: { mode: BizMode }) {
 
   async function handleIssueFromDetail() {
     if (!detail) return
-    const customer_ids = prompt('临时发券：输入客户 ID 列表，逗号分隔（用于快速测试）')
+    const raw = await window.prompt('临时发券：输入客户 ID 列表，逗号分隔（用于快速测试）')
+    if (raw == null) return
+    const customer_ids = raw
     if (!customer_ids) return
     const ids = customer_ids.split(',').map(s => Number(s.trim())).filter(Boolean)
     if (!ids.length) return toast.showToast('至少一个客户 ID', "warning")
@@ -146,26 +147,13 @@ export default function CouponView({ mode }: { mode: BizMode }) {
     } catch (e: any) { toast.showToast(e.message, "warning") }
   }
 
-  // === 生成公开领券活码 ===
-  async function handleCreateClaimQr(c: Coupon) {
-    try {
-      // 创建一个关联该券的活码
-      const qr = await fetch('/api/qrcodes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: `领券活码-${c.name}`,
-          target_type: 'coupon',
-          target_id: c.id,
-          mode
-        })
-      }).then(r => r.json())
-      if (!qr.id) throw new Error(qr.error || '活码创建失败')
-      const publicUrl = `${window.location.origin}/p/coupon?qr=${qr.id}`
-      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(publicUrl)}`
-      setQrModal({ couponId: c.id, couponName: c.name, url: publicUrl, qrUrl })
-      toast.showToast('领券活码已生成！', 'success')
-    } catch (e: any) { toast.showToast(e.message, 'warning') }
+  // === 生成领券活码 → 跳到活码管理页，预填关联券 ===
+  function handleCreateClaimQr(c: Coupon) {
+    if (onPrefillQr) {
+      onPrefillQr({ target_type: 'coupon', target_id: c.id, suggestName: `领券活码-${c.name}` })
+    } else {
+      toast.showToast('请先在系统设置中启用活码跳转功能', 'warning')
+    }
   }
 
   return (
@@ -211,7 +199,7 @@ export default function CouponView({ mode }: { mode: BizMode }) {
                 <div className="p-5">
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1">
-                      <div className="text-xs text-slate-400 mb-1">#{c.id} · {MODE_META[c.mode].label}</div>
+                      <div className="text-xs text-slate-400 mb-1">#{c.id} · {MODE_META.label}</div>
                       <div className="font-semibold text-slate-800">{c.name}</div>
                     </div>
                     <div className={`text-xs px-2 py-1 rounded-full ${out ? 'bg-rose-100 text-rose-600' : c.active === 1 ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-500'}`}>
@@ -395,34 +383,6 @@ export default function CouponView({ mode }: { mode: BizMode }) {
               <button onClick={handleIssueFromDetail} className="px-4 py-2 bg-emerald-500 text-white rounded-lg text-sm shadow-sm hover:bg-emerald-600">手动发券</button>
               <button onClick={() => setDetail(null)} className="px-4 py-2 border border-slate-200 rounded-lg text-sm">关闭</button>
             </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* 领券活码 Modal */}
-      <Modal open={!!qrModal} onClose={() => setQrModal(null)} title="📱 领券活码（给客户用）" maxWidth="max-w-sm">
-        {qrModal && (
-          <div className="text-center space-y-4">
-            <div className="text-sm text-slate-500">
-              扫这个二维码即可领取：<br />
-              <span className="font-bold text-slate-800">{qrModal.couponName}</span>
-            </div>
-            <div className="bg-slate-50 rounded-xl p-4">
-              <img src={qrModal.qrUrl} alt="领券活码" className="w-48 h-48 mx-auto" />
-            </div>
-            <div className="bg-slate-100 rounded-lg p-2 text-xs font-mono text-slate-700 break-all">
-              {qrModal.url}
-            </div>
-            <button
-              onClick={() => { navigator.clipboard?.writeText(qrModal.url); toast.showToast('链接已复制', 'success') }}
-              className="w-full py-2 bg-emerald-500 text-white rounded-lg text-sm"
-            >
-              复制领券链接
-            </button>
-            <p className="text-[10px] text-slate-400 leading-relaxed">
-              可打印在包裹卡、海报上，或直接分享给客户。<br />
-              扫活码后自动识别/创建客户，领券到客户券包。
-            </p>
           </div>
         )}
       </Modal>

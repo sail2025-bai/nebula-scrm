@@ -17,10 +17,10 @@ function parseCond(s) {
   }
 }
 
-function countBy(cond, mode) {
+function countBy(cond) {
   const f = buildSegmentWhere(cond)
-  const where = f.clause ? `(${f.clause}) AND customer_type = ?` : 'customer_type = ?'
-  return db.prepare(`SELECT COUNT(*) AS n FROM customers WHERE ${where}`).get(...f.params, mode).n
+  const where = f.clause || '1=1'
+  return db.prepare(`SELECT COUNT(*) AS n FROM customers WHERE ${where}`).get(...f.params).n
 }
 
 function customerIdsFromSegment(seg) {
@@ -47,16 +47,11 @@ function summarizeCustomers(ids) {
 function withMeta(row) {
   if (!row) return null
   const cond = parseCond(row.conditions)
-  const mode = row.mode === 'service' ? 'service' : 'retail'
-  return { ...row, conditions: cond, count: countBy(cond, mode) }
+  return { ...row, conditions: cond, count: countBy(cond) }
 }
 
 // === 基础 CRUD ===
 router.get('/', (req, res) => {
-  const mode = req.query.mode
-  if (mode === 'retail' || mode === 'service') {
-    return res.json(db.prepare('SELECT * FROM segments WHERE mode = ? ORDER BY id DESC').all(mode).map(withMeta))
-  }
   res.json(db.prepare('SELECT * FROM segments ORDER BY id DESC').all().map(withMeta))
 })
 
@@ -64,7 +59,7 @@ router.post('/', (req, res) => {
   const b = req.body || {}
   if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: '分群名称不能为空' })
   if (!b.conditions || typeof b.conditions !== 'object') return res.status(400).json({ error: '分群条件不能为空' })
-  const mode = b.mode === 'service' ? 'service' : 'retail'
+  const mode = (b.mode === 'service' || b.mode === 'retail') ? b.mode : null
   const r = db.prepare('INSERT INTO segments (name, description, conditions, created_at, mode) VALUES (?, ?, ?, ?, ?)').run(String(b.name).trim(), b.description ?? null, JSON.stringify(b.conditions), now(), mode)
   const row = db.prepare('SELECT * FROM segments WHERE id = ?').get(Number(r.lastInsertRowid))
   res.status(201).json(withMeta(row))

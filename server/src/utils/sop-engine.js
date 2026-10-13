@@ -94,7 +94,7 @@ async function executeStep(step, sop, customerId, ctx = {}) {
         const expires = fmt(new Date(Date.now() + 30 * 24 * 3600 * 1000))
         const cat = stepType === 'note_mark' ? 'SOP备注' : 'SOP自动'
         const r = db.prepare('INSERT INTO tags (name, category, mode, expires_at) VALUES (?, ?, ?, ?)')
-          .run(step.tag_name, cat, sop.mode || 'retail', expires)
+          .run(step.tag_name, cat, null, expires)
         tag = { id: Number(r.lastInsertRowid) }
       }
       db.prepare('INSERT OR IGNORE INTO customer_tags (customer_id, tag_id) VALUES (?, ?)').run(customerId, tag.id)

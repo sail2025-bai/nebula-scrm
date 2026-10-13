@@ -30,17 +30,14 @@ function leadWithOwner(id) {
 }
 
 router.get('/', (req, res) => {
-  const mode = req.query.mode
-  const rows = mode === 'retail' || mode === 'service'
-    ? db.prepare('SELECT l.*, s.name AS ownerName FROM seas_leads l LEFT JOIN staff s ON s.id = l.owner_staff_id WHERE l.mode = ? ORDER BY l.id DESC').all(mode)
-    : db.prepare('SELECT l.*, s.name AS ownerName FROM seas_leads l LEFT JOIN staff s ON s.id = l.owner_staff_id ORDER BY l.id DESC').all()
+  const rows = db.prepare('SELECT l.*, s.name AS ownerName FROM seas_leads l LEFT JOIN staff s ON s.id = l.owner_staff_id ORDER BY l.id DESC').all()
   res.json(rows)
 })
 
 router.post('/import', (req, res) => {
   const b = req.body || {}
   const lines = Array.isArray(b.lines) ? b.lines : []
-  const mode = b.mode === 'service' ? 'service' : 'retail'
+  const mode = (b.mode === 'service' || b.mode === 'retail') ? b.mode : null
   let imported = 0
   let failed = 0
   const ins = db.prepare('INSERT INTO seas_leads (name, company, phone, channel, status, mode, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')

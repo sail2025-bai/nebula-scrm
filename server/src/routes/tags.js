@@ -4,17 +4,13 @@ import { db } from '../db.js'
 const router = express.Router()
 
 router.get('/', (req, res) => {
-  const mode = req.query.mode
-  if (mode === 'retail' || mode === 'service') {
-    return res.json(db.prepare(`SELECT t.id, t.name, t.category, t.mode, COUNT(c.id) AS count FROM tags t LEFT JOIN customer_tags ct ON ct.tag_id = t.id LEFT JOIN customers c ON c.id = ct.customer_id AND c.customer_type = ? WHERE t.mode = ? GROUP BY t.id ORDER BY t.category, t.name`).all(mode, mode))
-  }
   res.json(db.prepare('SELECT t.id, t.name, t.category, t.mode, COUNT(ct.customer_id) AS count FROM tags t LEFT JOIN customer_tags ct ON ct.tag_id = t.id GROUP BY t.id ORDER BY t.category, t.name').all())
 })
 
 router.post('/', (req, res) => {
   const b = req.body || {}
   if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: '标签名称不能为空' })
-  const mode = b.mode === 'service' ? 'service' : 'retail'
+  const mode = (b.mode === 'service' || b.mode === 'retail') ? b.mode : null
   try {
     const r = db.prepare('INSERT INTO tags (name, category, mode) VALUES (?, ?, ?)').run(String(b.name).trim(), b.category || '业务标签', mode)
     res.status(201).json({ id: Number(r.lastInsertRowid), name: String(b.name).trim(), category: b.category || '业务标签', mode, count: 0 })

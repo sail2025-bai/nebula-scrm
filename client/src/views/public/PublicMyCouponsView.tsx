@@ -67,7 +67,7 @@ export default function PublicMyCouponsView({ customerCode, navigate }: Props) {
         <div className="text-center">
           <div className="text-5xl mb-4">😢</div>
           <p className="text-slate-600 mb-4">{error}</p>
-          <button onClick={() => navigate('coupon')} className="px-6 py-2 bg-orange-500 text-white rounded-xl">
+          <button onClick={() => navigate('coupon')} className="px-6 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-xl">
             去领券
           </button>
         </div>
@@ -77,36 +77,25 @@ export default function PublicMyCouponsView({ customerCode, navigate }: Props) {
 
   return (
     <div className="min-h-screen p-4 pb-20">
-      {/* 顶部欢迎区 */}
-      <div className="max-w-md mx-auto mb-6 pt-8">
-        <div className="text-center">
-          <div className="w-16 h-16 mx-auto rounded-full bg-gradient-to-br from-orange-400 to-rose-500 flex items-center justify-center text-white text-2xl mb-3">
-            🎁
-          </div>
-          <h1 className="text-2xl font-bold text-slate-800">我的券包</h1>
-          {customer && <p className="text-slate-500 text-sm mt-1">Hi，{customer.name}</p>}
-        </div>
-
-        {/* 统计卡片 */}
-        <div className="grid grid-cols-2 gap-3 mt-6">
-          <div className="bg-white rounded-2xl p-4 shadow-sm text-center">
-            <div className="text-3xl font-bold text-orange-500">{pendingCount}</div>
-            <div className="text-xs text-slate-400 mt-1">待使用</div>
-          </div>
-          <div className="bg-white rounded-2xl p-4 shadow-sm text-center">
-            <div className="text-3xl font-bold text-slate-400">{usedCount}</div>
-            <div className="text-xs text-slate-400 mt-1">已使用/过期</div>
-          </div>
+      {/* 顶部 Banner */}
+      <div className="max-w-md mx-auto mb-4 pt-8">
+        <div className="relative rounded-3xl p-6 bg-gradient-to-br from-emerald-500 via-teal-500 to-emerald-600 text-white overflow-hidden shadow-lg">
+          <i className="fa-solid fa-ticket absolute right-4 top-4 text-[48px] text-white/30" />
+          <h1 className="text-3xl font-bold">🎟️ 我的券包</h1>
+          <p className="text-sm text-white/80 mt-2">
+            当前可用 <span className="font-bold">{pendingCount}</span> 张 · 已过期 {usedCount} 张
+          </p>
+          {customer && <p className="text-xs text-white/70 mt-1">Hi，{customer.name}</p>}
         </div>
 
         {/* 筛选 */}
-        <div className="flex gap-2 mt-6">
+        <div className="flex gap-2 mt-4">
           {(['all', 'pending', 'used'] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
               className={`flex-1 py-2 text-sm rounded-xl transition ${
-                filter === f ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 shadow-sm'
+                filter === f ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-sm' : 'bg-white text-slate-500 shadow-sm'
               }`}
             >
               {f === 'all' ? '全部' : f === 'pending' ? '待使用' : '已使用'}
@@ -119,10 +108,10 @@ export default function PublicMyCouponsView({ customerCode, navigate }: Props) {
       <div className="max-w-md mx-auto space-y-4">
         {filteredCoupons.length === 0 && (
           <div className="text-center py-12 bg-white rounded-2xl shadow-sm">
-            <div className="text-5xl mb-3">📭</div>
-            <p className="text-slate-400 mb-4">暂无券</p>
-            <button onClick={() => navigate('coupon')} className="px-6 py-2 bg-orange-500 text-white rounded-xl text-sm">
-              去领一张
+            <i className="fa-solid fa-ticket text-5xl text-emerald-200 mb-3" />
+            <p className="text-slate-400 mb-4">暂无优惠券</p>
+            <button onClick={() => navigate('coupon')} className="px-6 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-xl text-sm">
+              去领券
             </button>
           </div>
         )}
@@ -159,12 +148,12 @@ function CouponCard({ issue, onShow, onShop }: { issue: CouponIssue; onShow: () 
       onClick={isPending ? onShow : undefined}
     >
       {/* 左侧颜色条 */}
-      <div className={`absolute left-0 top-0 bottom-0 w-1 ${isPending ? 'bg-gradient-to-b from-orange-400 to-rose-500' : 'bg-slate-300'}`} />
+      <div className={`absolute left-0 top-0 bottom-0 w-1 ${isPending ? 'bg-gradient-to-b from-emerald-500 to-teal-500' : 'bg-slate-300'}`} />
 
       <div className="flex items-center justify-between pl-2">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full">{typeLabel}</span>
+            <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">{typeLabel}</span>
             {used && <span className="text-xs text-slate-400">已核销</span>}
             {expired && <span className="text-xs text-slate-400">已过期</span>}
           </div>
@@ -176,9 +165,9 @@ function CouponCard({ issue, onShow, onShop }: { issue: CouponIssue; onShow: () 
         </div>
 
         <div className="text-right ml-4">
-          <div className="text-3xl font-bold text-rose-500">{valueText}</div>
+          <div className="text-3xl font-bold text-amber-500">{valueText}</div>
           {isPending && (
-            <div className="text-xs text-orange-500 mt-1 font-medium">点击出示核销码 →</div>
+            <div className="text-xs text-emerald-600 mt-1 font-medium">点击出示核销码 →</div>
           )}
         </div>
       </div>
@@ -193,14 +182,14 @@ function CouponCard({ issue, onShow, onShop }: { issue: CouponIssue; onShow: () 
           <div className="flex gap-2">
             <button
               onClick={(e) => { e.stopPropagation(); onShow() }}
-              className="flex-1 py-2 text-xs border border-slate-200 rounded-xl hover:bg-slate-50"
+              className="flex-1 py-2 text-xs border border-emerald-200 text-emerald-600 rounded-xl hover:bg-emerald-50"
             >
               出示核销码
             </button>
             {onShop && (
               <button
                 onClick={(e) => { e.stopPropagation(); onShop() }}
-                className="flex-1 py-2 text-xs bg-gradient-to-r from-orange-500 to-rose-500 text-white rounded-xl shadow-sm"
+                className="flex-1 py-2 text-xs bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-xl shadow-sm hover:shadow-lg"
               >
                 🛒 去商城使用
               </button>

@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useToast } from '../ui/Toast'
-import { MODE_META, type BizMode } from '../../types'
+import { MODE_META } from '../../types'
 
-export type ViewId = 'dashboard' | 'customers' | 'seas' | 'qrcodes' | 'segments' | 'groups' | 'sop' | 'coupons' | 'seckill' | 'broadcast' | 'wecom'
+export type ViewId = 'dashboard' | 'customers' | 'seas' | 'followups' | 'qrcodes' | 'segments' | 'groups' | 'sop' | 'coupons' | 'seckill' | 'broadcast' | 'staff' | 'tags' | 'wecom' | 'products' | 'orders'
 
 interface SidebarProps {
   current: ViewId
   onChange: (view: ViewId) => void
-  mode: BizMode
-  onModeChange: (mode: BizMode) => void
+  
   userName?: string
   churnCount: number
   activeSop: number
@@ -17,24 +16,33 @@ interface SidebarProps {
 }
 
 const NAV_ITEMS: { id: ViewId; label: string; icon: string; badgeType?: 'live' | 'churn' | 'sop' }[] = [
+  // ─── 概览 ───
   { id: 'dashboard', label: '运营监控仪表盘', icon: 'fa-solid fa-chart-pie', badgeType: 'live' },
+  // ─── 客户域（核心主体 + 基础依赖）───
   { id: 'customers', label: '客户资产 360°', icon: 'fa-solid fa-user-tag', badgeType: 'churn' },
-  { id: 'seas', label: '线索公海', icon: 'fa-solid fa-water' },
-  { id: 'qrcodes', label: '渠道活码', icon: 'fa-solid fa-qrcode' },
-  { id: 'segments', label: '客户分群管理', icon: 'fa-solid fa-layer-group' },
-  { id: 'groups', label: '企微社群矩阵运营', icon: 'fa-solid fa-comments' },
-  { id: 'sop', label: 'SOP 自动化策略流', icon: 'fa-solid fa-bolt-lightning', badgeType: 'sop' },
-  { id: 'coupons', label: '优惠券与发券中心', icon: 'fa-solid fa-tags' },
-  { id: 'seckill', label: '限时秒杀与福利抢单', icon: 'fa-solid fa-bolt' },
-  { id: 'broadcast', label: '精准触达与群发', icon: 'fa-solid fa-bullhorn' },
-  { id: 'wecom', label: '企微对接中心', icon: 'fa-solid fa-plug' }
+  { id: 'tags',      label: '标签库管理',   icon: 'fa-solid fa-tags' },
+  { id: 'seas',      label: '线索公海',     icon: 'fa-solid fa-water' },
+  { id: 'followups', label: '今日待跟进',   icon: 'fa-solid fa-list-check', badgeType: 'live' },
+  // ─── 获客域（流量入口 + 沉淀）───
+  { id: 'qrcodes',   label: '渠道活码',         icon: 'fa-solid fa-qrcode' },
+  { id: 'groups',    label: '企微社群矩阵运营', icon: 'fa-solid fa-comments' },
+  // ─── 触达域（策略 + 营销 + 执行）───
+  { id: 'segments',  label: '客户分群管理',     icon: 'fa-solid fa-layer-group' },
+  { id: 'sop',       label: 'SOP 自动化策略流', icon: 'fa-solid fa-bolt-lightning', badgeType: 'sop' },
+  { id: 'products',  label: '商品管理',           icon: 'fa-solid fa-box' },
+  { id: 'orders',    label: '订单管理',           icon: 'fa-solid fa-truck' },
+  { id: 'coupons',   label: '优惠券与发券中心', icon: 'fa-solid fa-tags' },
+  { id: 'seckill',   label: '限时秒杀与福利抢单', icon: 'fa-solid fa-bolt' },
+  { id: 'broadcast', label: '精准触达与群发',   icon: 'fa-solid fa-bullhorn' },
+  // ─── 平台域（基础设施）───
+  { id: 'wecom',     label: '企微对接中心', icon: 'fa-solid fa-plug' },
+  { id: 'staff',     label: '员工管理',     icon: 'fa-solid fa-users-gear' },
 ]
 
 export default function Sidebar({
   current,
   onChange,
-  mode,
-  onModeChange,
+
   userName,
   churnCount,
   activeSop,
@@ -42,11 +50,11 @@ export default function Sidebar({
   onMobileClose
 }: SidebarProps) {
   const { showToast } = useToast()
-  const [orgSubText, setOrgSubText] = useState<string>(MODE_META[mode].orgSub)
+  const [orgSubText, setOrgSubText] = useState<string>(MODE_META.orgSub)
 
   // 根据后端真实企微对接状态和 staff 数量动态生成副标题
   useEffect(() => {
-    const staffWord = MODE_META[mode].staffWord
+    const staffWord = MODE_META.staffWord
     fetch('/api/health')
       .then(r => r.json())
       .then((d: { wecom: { status: string; corp_id_masked: string | null; token_ready: boolean }; counts: { staff: number } }) => {
@@ -61,7 +69,7 @@ export default function Sidebar({
         }
       })
       .catch(() => { /* 保持默认 */ })
-  }, [mode])
+  }, [])
 
   const triggerSync = () => {
     showToast('企微组织架构与客户变动增量同步完成！', 'success')
@@ -74,39 +82,14 @@ export default function Sidebar({
       } md:translate-x-0 md:shadow-none`}
     >
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {/* 左上角：品牌 Logo + B/C 图标切换 */}
+        {/* 左上角：品牌 Logo */}
         <div className="h-16 flex items-center px-4 gap-3 shrink-0 border-b border-slate-100">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-white shadow-md shadow-emerald-200 shrink-0">
             <i className="fa-solid fa-users-viewfinder text-lg" />
           </div>
           <div className="min-w-0 flex-1">
-            <h1 className="font-bold text-slate-900 leading-none tracking-tight truncate text-sm">星云企微SCRM</h1>
+            <h1 className="font-bold text-slate-900 leading-none tracking-tight truncate text-sm">逸云企微SCRM</h1>
             <span className="text-[10px] text-emerald-600 font-medium tracking-wide truncate block">私域增长引擎</span>
-          </div>
-          {/* B/C 端图标切换 */}
-          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5 shrink-0">
-            <button
-              title="B端·线索与大客户"
-              onClick={() => mode !== 'service' && onModeChange('service')}
-              className={`w-8 h-8 rounded-md flex items-center justify-center transition ${
-                mode === 'service'
-                  ? 'bg-white shadow-sm text-emerald-600'
-                  : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <i className="fa-solid fa-briefcase text-xs" />
-            </button>
-            <button
-              title="C端·消费与会员零售"
-              onClick={() => mode !== 'retail' && onModeChange('retail')}
-              className={`w-8 h-8 rounded-md flex items-center justify-center transition ${
-                mode === 'retail'
-                  ? 'bg-white shadow-sm text-emerald-600'
-                  : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <i className="fa-solid fa-cart-shopping text-xs" />
-            </button>
           </div>
           <button
             onClick={onMobileClose}
@@ -120,14 +103,14 @@ export default function Sidebar({
         <div className="px-4 pt-3 pb-2">
           <div className="bg-gradient-to-r from-slate-50 to-emerald-50/40 border border-slate-200/60 rounded-xl px-3 py-2 flex items-center gap-2.5">
             <span className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs shrink-0">
-              {MODE_META[mode].orgBadge}
+              {MODE_META.orgBadge}
             </span>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold text-slate-800 truncate">{MODE_META[mode].orgName}</div>
+              <div className="text-xs font-semibold text-slate-800 truncate">{MODE_META.orgName}</div>
               <div className="text-[10px] text-slate-500 truncate">{orgSubText}</div>
             </div>
             <span className="text-[10px] font-medium text-emerald-600 bg-white px-1.5 py-0.5 rounded border border-emerald-100 shrink-0">
-              {MODE_META[mode].shortLabel}
+              {MODE_META.shortLabel}
             </span>
           </div>
         </div>

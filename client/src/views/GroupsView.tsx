@@ -7,7 +7,7 @@ import Modal from '../components/ui/Modal'
 import { groupHealthColor } from '../utils'
 
 interface GroupsViewProps {
-  mode: BizMode
+
   dataVersion: number
 }
 
@@ -43,7 +43,7 @@ interface GroupMember {
   name: string | null
 }
 
-export default function GroupsView({ mode, dataVersion }: GroupsViewProps) {
+export default function GroupsView({dataVersion }: GroupsViewProps) {
   const { showToast } = useToast()
   const [groups, setGroups] = useState<WechatGroup[]>([])
   const [staff, setStaff] = useState<Staff[]>([])
@@ -67,8 +67,8 @@ export default function GroupsView({ mode, dataVersion }: GroupsViewProps) {
   const [simBusy, setSimBusy] = useState(false)
 
   const loadGroups = useCallback(() => {
-    api.getGroups(mode).then(setGroups).catch(() => {})
-  }, [mode])
+    api.getGroups().then(setGroups).catch(() => {})
+  }, [])
 
   const loadEvents = useCallback(() => {
     api.getGroupEvents(30, false).then(setEvents).catch(() => {})
@@ -118,7 +118,7 @@ export default function GroupsView({ mode, dataVersion }: GroupsViewProps) {
     }
     setSaving(true)
     api
-      .createGroup(form.name.trim(), Number(form.ownerId), mode)
+      .createGroup(form.name.trim(), Number(form.ownerId))
       .then(() => {
         setCreateOpen(false)
         showToast('社群创建成功，新群 SOP 已自动挂载', 'success')
@@ -128,8 +128,8 @@ export default function GroupsView({ mode, dataVersion }: GroupsViewProps) {
       .finally(() => setSaving(false))
   }
 
-  const handleDelete = (group: WechatGroup) => {
-    if (!window.confirm(`确定删除社群「${group.name}」？删除后不可恢复`)) return
+  const handleDelete = async (group: WechatGroup) => {
+    if (!(await window.confirm(`确定删除社群「${group.name}」？删除后不可恢复`))) return
     api
       .deleteGroup(group.id)
       .then(() => {

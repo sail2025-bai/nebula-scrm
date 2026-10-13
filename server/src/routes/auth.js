@@ -1,5 +1,6 @@
 import express from 'express'
 import crypto from 'node:crypto'
+import { wrapAsync } from '../utils/wrap.js'
 import { db, now } from '../db.js'
 import { signToken } from '../middleware/auth.js'
 
@@ -25,11 +26,11 @@ router.post('/register', (req, res) => {
   const name = b.name !== undefined && b.name !== null ? String(b.name).trim() : ''
   const account = b.account !== undefined && b.account !== null ? String(b.account).trim() : ''
   const password = b.password !== undefined && b.password !== null ? String(b.password) : ''
-  const businessMode = b.businessMode || b.business_mode || 'retail'
+  const businessMode = b.businessMode || b.business_mode || null
   if (!name) return res.status(400).json({ error: '姓名不能为空' })
   if (account.length < 3) return res.status(400).json({ error: '账号长度不能少于3个字符' })
   if (password.length < 6) return res.status(400).json({ error: '密码长度不能少于6位' })
-  if (businessMode !== 'retail' && businessMode !== 'service') return res.status(400).json({ error: '业务模式只能是 retail 或 service' })
+  if (businessMode && businessMode !== 'retail' && businessMode !== 'service') return res.status(400).json({ error: '业务模式可选值：retail 或 service' })
   if (db.prepare('SELECT id FROM users WHERE account = ?').get(account)) return res.status(400).json({ error: '该账号已被注册' })
   try {
     const r = db.prepare('INSERT INTO users (name, account, password_hash, business_mode, created_at) VALUES (?, ?, ?, ?, ?)').run(name, account, hashPassword(password), businessMode, now())
@@ -59,7 +60,7 @@ router.post('/login', (req, res) => {
 
 import { getStaffByCode, wecomConfig, log } from '../wecom.js'
 
-router.post('/wxlogin', async (req, res) => {
+router.post('/wxlogin', wrapAsync(async (req, res) => {
   const b = req.body || {}
   const code = String(b.code || '').trim()
   if (!code) return res.status(400).json({ error: '缺少企微侧边栏 code 参数' })
@@ -121,6 +122,6 @@ router.post('/wxlogin', async (req, res) => {
   } catch (e) {
     res.status(400).json({ error: '企微侧边栏登录失败：' + e.message })
   }
-})
+}))
 
 export default router

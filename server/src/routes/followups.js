@@ -1,4 +1,5 @@
 import express from 'express'
+import { wrapAsync } from '../utils/wrap.js'
 import { db, now } from '../db.js'
 import { sendInternalWecomMessage } from '../wecom.js'
 
@@ -7,12 +8,72 @@ const router = express.Router()
 const baseSql = 'SELECT f.*, s.name AS staffName, c.name AS customerName, c.wechat_nick AS customerNick FROM follow_ups f LEFT JOIN staff s ON s.id = f.staff_id LEFT JOIN customers c ON c.id = f.customer_id'
 
 router.get('/', (req, res) => {
-  const { customer_id } = req.query
-  if (customer_id) {
-    res.json(db.prepare(`${baseSql} WHERE f.customer_id = ? ORDER BY f.created_at DESC, f.id DESC`).all(Number(customer_id)))
-  } else {
-    res.json(db.prepare(`${baseSql} ORDER BY f.created_at DESC, f.id DESC`).all())
+  const { customer_id, staff_id, status, scope } = req.query
+  let sql = baseSql
+  const params = []
+  const wheres = []
+
+  if (customer_id) { wheres.push('f.customer_id = ?'); params.push(Number(customer_id)) }
+  if (staff_id) { wheres.push('f.staff_id = ?'); params.push(Number(staff_id)) }
+
+  // 状态过滤：待处理 / 已完成 / 全部
+  if (status === 'pending') {
+    // outcome 为 null / '待处理' / '已指派' 都算待处理
+    wheres.push("(f.outcome IS NULL OR f.outcome = '' OR f.outcome IN ('待处理','已指派'))")
+  } else if (status === 'done') {
+    wheres.push("f.outcome IS NOT NULL AND f.outcome NOT IN ('待处理','已指派','')")
   }
+
+  // 时间范围过滤（基于 next_followup_at）
+  if (scope === 'overdue') {
+    // 已逾期：next_followup_at < 今天 0 点，且状态是 pending
+    const todayStart = new Date().toISOString().slice(0, 11) + '00:00:00'
+    wheres.push(`f.next_followup_at IS NOT NULL AND f.next_followup_at < '${todayStart}'`)
+    if (!wheres.some(w => w.includes('outcome'))) {
+      wheres.push("(f.outcome IS NULL OR f.outcome = '' OR f.outcome IN ('待处理','已指派'))")
+    }
+  } else if (scope === 'today') {
+    const todayStart = new Date().toISOString().slice(0, 11) + '00:00:00'
+    const tomorrowStart = new Date(Date.now() + 86400000).toISOString().slice(0, 11) + '00:00:00'
+    wheres.push(`f.next_followup_at IS NOT NULL AND f.next_followup_at >= '${todayStart}' AND f.next_followup_at < '${tomorrowStart}'`)
+    if (!wheres.some(w => w.includes('outcome'))) {
+      wheres.push("(f.outcome IS NULL OR f.outcome = '' OR f.outcome IN ('待处理','已指派'))")
+    }
+  }
+
+  if (wheres.length) sql += ' WHERE ' + wheres.join(' AND ')
+  sql += ' ORDER BY f.next_followup_at IS NULL, f.next_followup_at ASC, f.created_at DESC, f.id DESC'
+
+  const rows = db.prepare(sql).all(...params)
+
+  // 如果同时请求 summary，附在响应里
+  if (req.query.summary === '1') {
+    const summary = db.prepare(`
+      SELECT
+        SUM(CASE WHEN outcome IS NULL OR outcome = '' OR outcome IN ('待处理','已指派') THEN 1 ELSE 0 END) AS pending,
+        SUM(CASE WHEN outcome IS NOT NULL AND outcome NOT IN ('待处理','已指派','') THEN 1 ELSE 0 END) AS done,
+        SUM(CASE WHEN (outcome IS NULL OR outcome = '' OR outcome IN ('待处理','已指派')) AND next_followup_at IS NOT NULL AND next_followup_at < date('now','localtime') THEN 1 ELSE 0 END) AS overdue,
+        SUM(CASE WHEN (outcome IS NULL OR outcome = '' OR outcome IN ('待处理','已指派')) AND date(next_followup_at) = date('now','localtime') THEN 1 ELSE 0 END) AS today
+      FROM follow_ups
+    `).get()
+    return res.json({ items: rows, summary })
+  }
+
+  res.json(rows)
+})
+
+// 快速摘要（侧边栏徽章 / Dashboard 卡片用）
+router.get('/summary', (req, res) => {
+  const row = db.prepare(`
+    SELECT
+      SUM(CASE WHEN outcome IS NULL OR outcome = '' OR outcome IN ('待处理','已指派') THEN 1 ELSE 0 END) AS pending,
+      SUM(CASE WHEN outcome IS NOT NULL AND outcome NOT IN ('待处理','已指派','') THEN 1 ELSE 0 END) AS done,
+      SUM(CASE WHEN (outcome IS NULL OR outcome = '' OR outcome IN ('待处理','已指派')) AND next_followup_at IS NOT NULL AND next_followup_at < date('now','localtime') THEN 1 ELSE 0 END) AS overdue,
+      SUM(CASE WHEN (outcome IS NULL OR outcome = '' OR outcome IN ('待处理','已指派')) AND date(next_followup_at) = date('now','localtime') THEN 1 ELSE 0 END) AS today,
+      SUM(CASE WHEN (outcome IS NULL OR outcome = '' OR outcome IN ('待处理','已指派')) AND staff_id IS NULL THEN 1 ELSE 0 END) AS unassigned
+    FROM follow_ups
+  `).get()
+  res.json(row)
 })
 
 router.post('/', (req, res) => {
@@ -33,7 +94,7 @@ router.delete('/:id', (req, res) => {
 })
 
 // 一键指派给对应顾问：发企微内部消息 + 更新 outcome
-router.post('/:id/assign', async (req, res) => {
+router.post('/:id/assign', wrapAsync(async (req, res) => {
   const id = Number(req.params.id)
   const fu = Number.isInteger(id)
     ? db.prepare(`${baseSql} WHERE f.id = ?`).get(id)
@@ -75,7 +136,7 @@ router.post('/:id/assign', async (req, res) => {
     followup: { id: fu.id, outcome: '已指派', customer: customerName },
     wecom: wecomResult
   })
-})
+}))
 
 // 顾问执行完待办 → 标记 outcome
 router.post('/:id/complete', (req, res) => {

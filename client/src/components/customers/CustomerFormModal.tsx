@@ -2,14 +2,14 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import type { CustomerPayload } from '../../api'
 import type { BizMode, Customer, Staff, Tag } from '../../types'
-import { MODE_META, STAGE_META_BY_MODE } from '../../types'
+import { MODE_META, STAGE_META } from '../../types'
 import Modal from '../ui/Modal'
 import { useToast } from '../ui/Toast'
 
 interface CustomerFormModalProps {
   open: boolean
   customer: Customer | null
-  mode: BizMode
+
   onClose: () => void
   onSaved: () => void
 }
@@ -48,7 +48,7 @@ const EMPTY_FORM: FormState = {
   tags: []
 }
 
-export default function CustomerFormModal({ open, customer, mode, onClose, onSaved }: CustomerFormModalProps) {
+export default function CustomerFormModal({ open, customer, onClose, onSaved }: CustomerFormModalProps) {
   const { showToast } = useToast()
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [channels, setChannels] = useState<string[]>([])
@@ -86,7 +86,7 @@ export default function CustomerFormModal({ open, customer, mode, onClose, onSav
   useEffect(() => {
     if (!open) return
     api
-      .getChannels(mode)
+      .getChannels()
       .then((list) => {
         setChannels(list)
         if (!customer && list.length > 0) {
@@ -95,8 +95,8 @@ export default function CustomerFormModal({ open, customer, mode, onClose, onSav
       })
       .catch(() => {})
     api.getStaff().then(setStaffList).catch(() => {})
-    api.getTags(mode).then(setAllTags).catch(() => {})
-  }, [open, customer, mode])
+    api.getTags().then(setAllTags).catch(() => {})
+  }, [open, customer])
 
   const toggleTag = (name: string) => {
     setForm((prev) => ({
@@ -123,14 +123,9 @@ export default function CustomerFormModal({ open, customer, mode, onClose, onSav
       orders: Number(form.orders) || 0,
       notes: form.notes.trim() || null,
       tags: form.tags,
-      customer_type: mode,
-      ...(mode === 'service'
-        ? {
-            company: form.company.trim() || null,
-            position: form.position.trim() || null,
-            intent_level: form.intent_level || null
-          }
-        : {})
+      company: form.company.trim() || null,
+      position: form.position.trim() || null,
+      intent_level: form.intent_level || null
     }
     setSubmitting(true)
     try {
@@ -226,42 +221,39 @@ export default function CustomerFormModal({ open, customer, mode, onClose, onSav
             className={inputCls}
           />
         </div>
-        {mode === 'service' && (
-          <>
-            <div>
-              <label className={labelCls}>公司名称</label>
-              <input
-                type="text"
-                value={form.company}
-                onChange={(e) => setForm((prev) => ({ ...prev, company: e.target.value }))}
-                placeholder="客户所在公司全称"
-                className={inputCls}
-              />
-            </div>
-            <div>
-              <label className={labelCls}>职位</label>
-              <input
-                type="text"
-                value={form.position}
-                onChange={(e) => setForm((prev) => ({ ...prev, position: e.target.value }))}
-                placeholder="关键决策人职位"
-                className={inputCls}
-              />
-            </div>
-            <div>
-              <label className={labelCls}>意向等级</label>
-              <select
-                value={form.intent_level}
-                onChange={(e) => setForm((prev) => ({ ...prev, intent_level: e.target.value }))}
-                className={selectCls}
-              >
-                <option value="A">A高意向</option>
-                <option value="B">B培育中</option>
-                <option value="C">C低意向</option>
-              </select>
-            </div>
-          </>
-        )}
+        <div>
+          <label className={labelCls}>公司名称</label>
+          <input
+            type="text"
+            value={form.company}
+            onChange={(e) => setForm((prev) => ({ ...prev, company: e.target.value }))}
+            placeholder="客户所在公司全称"
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label className={labelCls}>职位</label>
+          <input
+            type="text"
+            value={form.position}
+            onChange={(e) => setForm((prev) => ({ ...prev, position: e.target.value }))}
+            placeholder="关键决策人职位"
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label className={labelCls}>意向等级</label>
+          <select
+            value={form.intent_level}
+            onChange={(e) => setForm((prev) => ({ ...prev, intent_level: e.target.value }))}
+            className={selectCls}
+          >
+            <option value="">未指定</option>
+            <option value="A">A高意向</option>
+            <option value="B">B培育中</option>
+            <option value="C">C低意向</option>
+          </select>
+        </div>
         <div>
           <label className={labelCls}>渠道来源</label>
           <select
@@ -283,7 +275,7 @@ export default function CustomerFormModal({ open, customer, mode, onClose, onSav
             onChange={(e) => setForm((prev) => ({ ...prev, stage: e.target.value }))}
             className={selectCls}
           >
-            {Object.entries(STAGE_META_BY_MODE[mode]).map(([value, meta]) => (
+            {Object.entries(STAGE_META).map(([value, meta]) => (
               <option key={value} value={value}>
                 {meta.label}
               </option>
@@ -307,7 +299,7 @@ export default function CustomerFormModal({ open, customer, mode, onClose, onSav
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className={labelCls}>{MODE_META[mode].spendLabel}（元）</label>
+            <label className={labelCls}>{MODE_META.spendLabel}（元）</label>
             <input
               type="number"
               min="0"
@@ -317,7 +309,7 @@ export default function CustomerFormModal({ open, customer, mode, onClose, onSav
             />
           </div>
           <div>
-            <label className={labelCls}>{MODE_META[mode].ordersLabel}（次）</label>
+            <label className={labelCls}>{MODE_META.ordersLabel}（次）</label>
             <input
               type="number"
               min="0"

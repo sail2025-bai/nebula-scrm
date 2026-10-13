@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import { MODE_META, type BizMode, type Sop, type SopStep, type Coupon, type SopRun, type SopConditions, type ConditionField, type ConditionOperator, type Tag, type Staff, type WechatGroup } from '../types'
+import { MODE_META, type Sop, type SopStep, type Coupon, type SopRun, type SopConditions, type ConditionField, type ConditionOperator, type Tag, type Staff, type WechatGroup } from '../types'
 import { useToast } from '../components/ui/Toast'
 import Empty from '../components/ui/Empty'
 import Modal from '../components/ui/Modal'
@@ -42,6 +42,14 @@ function conversionLabel(name: string): string {
   if (name.includes('售后') || name.includes('关怀')) return '好评率'
   if (name.includes('退群') || name.includes('挽回')) return '挽回留存'
   return '转化率'
+}
+
+/** 根据 sop.mode 返回行业标签信息（后端 sops.mode：retail/service/null） */
+function industryBadge(mode: string | null | undefined): { label: string; cls: string; icon: string } | null {
+  if (!mode) return null
+  if (mode === 'retail') return { label: '零售', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: 'fa-solid fa-cart-shopping' }
+  if (mode === 'service') return { label: '服务业', cls: 'bg-blue-50 text-blue-700 border-blue-200', icon: 'fa-solid fa-briefcase' }
+  return null
 }
 
 // 前端本地的条件→人类可读文案（编辑时实时预览用；保存后以后端 conditions_human 为准）
@@ -93,7 +101,7 @@ interface SopFormState {
   trigger_days: number
   trigger_min_spend: number
   trigger_channel: string
-  mode: BizMode
+
   scope?: 'all' | 'mine'
   steps: SopStep[]
   conditions: SopConditions | null
@@ -106,19 +114,20 @@ const emptyForm: SopFormState = {
   trigger_days: 30,
   trigger_min_spend: 500,
   trigger_channel: '',
-  mode: 'retail',
   scope: 'mine',
   steps: [{ phase: '步骤1 · 立即', title: '', detail: '', metric: '待配置', action: 'send_wechat', delay_days: 0 }],
   conditions: null
 }
 
-export default function SopView({ mode }: { mode: BizMode }) {
+export default function SopView({}: {}) {
   const { showToast } = useToast()
   const [sops, setSops] = useState<Sop[]>([])        // 我的 SOP（is_template=0）
   const [templates, setTemplates] = useState<Sop[]>([]) // 系统模板（is_template=1）
   // 后端附加的当前用户元信息：决定是否显示 scope 下拉、做列表过滤
   const [myMeta, setMyMeta] = useState<{ is_admin: boolean; me: { id: number; account: string; name: string | null } | null } | null>(null)
   const [viewTab, setViewTab] = useState<'my' | 'template'>('my')
+  // 模板行业筛选：all=不筛，retail=零售，service=服务业
+  const [templateIndustry, setTemplateIndustry] = useState<'all' | 'retail' | 'service'>('all')
   const [detail, setDetail] = useState<Sop | null>(null)
 
   // 表单状态
@@ -132,13 +141,13 @@ export default function SopView({ mode }: { mode: BizMode }) {
   const [runOpen, setRunOpen] = useState(false)
   const [runLimit, setRunLimit] = useState(10)
   const [coupons, setCoupons] = useState<Coupon[]>([])
-  useEffect(() => { api.getCoupons(mode).then(setCoupons).catch(() => {}) }, [mode])
+  useEffect(() => { api.getCoupons().then(setCoupons).catch(() => {}) }, [])
   const [tags, setTags] = useState<Tag[]>([])
-  useEffect(() => { api.getTags(mode).then(setTags).catch(() => {}) }, [mode])
+  useEffect(() => { api.getTags().then(setTags).catch(() => {}) }, [])
   const [staffList, setStaffList] = useState<Staff[]>([])
   useEffect(() => { api.getStaff().then(setStaffList).catch(() => {}) }, [])
   const [groupList, setGroupList] = useState<WechatGroup[]>([])
-  useEffect(() => { api.getGroups(mode).then(setGroupList).catch(() => {}) }, [mode])
+  useEffect(() => { api.getGroups().then(setGroupList).catch(() => {}) }, [])
   const [runningSop, setRunningSop] = useState<Sop | null>(null)
   const [runBusy, setRunBusy] = useState(false)
 
@@ -154,8 +163,8 @@ export default function SopView({ mode }: { mode: BizMode }) {
     api.getSopConditionMeta().then(m => { setCondFields(m.fields); setCondOperators(m.operators) }).catch(() => {})
   }, [])
 
-  const load = useCallback(() => {
-    api.getSops(mode).then(resp => {
+  const load = useCallback((industryFilter?: 'retail' | 'service' | null) => {
+    api.getSops().then(resp => {
       const items = resp.items || (resp as unknown as Sop[])  // 兼容旧格式兜底
       const meta = resp._meta || null
       if (meta) setMyMeta(meta)
@@ -167,13 +176,23 @@ export default function SopView({ mode }: { mode: BizMode }) {
         : items.filter(s => s.is_template || (s.scope === 'all') || (s.scope !== 'mine') || (s.created_by && s.created_by === myId))
       setSops(filtered)
     }).catch(() => {})
-    api.getSopTemplates(mode).then(resp => {
+    api.getSopTemplates(industryFilter).then(resp => {
       const items = resp.items || (resp as unknown as Sop[])
       setTemplates(items.filter(s => s.is_template))
     }).catch(() => {})
-  }, [mode])
+  }, [])
 
   useEffect(() => { load() }, [load])
+  // 行业筛选变化时只刷新模板，不影响「我的 SOP」
+  useEffect(() => {
+    if (viewTab === 'template') {
+      const filter = templateIndustry === 'all' ? null : templateIndustry
+      api.getSopTemplates(filter).then(resp => {
+        const items = resp.items || (resp as unknown as Sop[])
+        setTemplates(items.filter(s => s.is_template))
+      }).catch(() => {})
+    }
+  }, [templateIndustry, viewTab])
 
   const handleToggle = async (sop: Sop) => {
     try {
@@ -185,7 +204,7 @@ export default function SopView({ mode }: { mode: BizMode }) {
   }
 
   const openCreate = () => {
-    setEditing({ ...emptyForm, mode })
+    setEditing({ ...emptyForm})
     setPreviewCustomers([])
     setPreviewTotal(0)
     setFormOpen(true)
@@ -200,7 +219,6 @@ export default function SopView({ mode }: { mode: BizMode }) {
       trigger_days: sop.trigger_days || 30,
       trigger_min_spend: sop.trigger_min_spend || 500,
       trigger_channel: sop.trigger_channel || '',
-      mode: sop.mode || mode,
       scope: sop.scope || 'mine',
       steps: sop.steps.length ? sop.steps : [{ phase: '步骤1 · 立即', title: '', detail: '', metric: '待配置', action: 'send_wechat', delay_days: 0 }],
       conditions: sop.conditions || null
@@ -233,7 +251,6 @@ export default function SopView({ mode }: { mode: BizMode }) {
         trigger_days: f.trigger_days,
         trigger_min_spend: f.trigger_min_spend,
         trigger_channel: f.trigger_channel?.trim() || undefined,
-        mode: f.mode,
         steps: validSteps,
         conditions: f.conditions || null,
         scope: (myMeta?.is_admin ? (f.scope || 'mine') : 'mine') as 'all' | 'mine',
@@ -264,7 +281,7 @@ export default function SopView({ mode }: { mode: BizMode }) {
   }
 
   const handleDelete = async (sop: Sop) => {
-    if (!window.confirm(`确定删除 SOP「${sop.name}」？执行日志会保留`)) return
+    if (!(await window.confirm(`确定删除 SOP「${sop.name}」？执行日志会保留`))) return
     try { await api.deleteSop(sop.id); showToast('已删除', 'success'); load(); if (detail?.id === sop.id) setDetail(null) }
     catch (e) { showToast(e instanceof Error ? e.message : '删除失败', 'warning') }
   }
@@ -318,10 +335,10 @@ export default function SopView({ mode }: { mode: BizMode }) {
           <div className="flex flex-wrap items-center gap-2">
             <h4 className="font-bold text-slate-900 text-sm">自动化 SOP 运营工作流配置</h4>
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium whitespace-nowrap">
-              {MODE_META[mode].sopBadge}
+              {MODE_META.sopBadge}
             </span>
           </div>
-          <p className="text-xs text-slate-500 hidden sm:block">{MODE_META[mode].sopDesc}</p>
+          <p className="text-xs text-slate-500 hidden sm:block">{MODE_META.sopDesc}</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -370,9 +387,35 @@ export default function SopView({ mode }: { mode: BizMode }) {
       </div>
 
       {viewTab === 'template' && (
-        <div className="bg-blue-50 border border-blue-200 text-blue-700 text-[11px] px-3 py-2 rounded-lg">
-          💡 系统模板是行业标准方案，只读不可执行。点击「使用此模板」克隆一份到你的 SOP，再编辑步骤 / 调整触发条件 / 激活运行。
-        </div>
+        <>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-slate-500 font-medium">🏷️ 行业筛选：</span>
+            {([
+              { v: 'all', label: '全部行业', icon: 'fa-solid fa-layer-group' },
+              { v: 'retail', label: '零售/C端', icon: 'fa-solid fa-cart-shopping' },
+              { v: 'service', label: '服务业/B端', icon: 'fa-solid fa-briefcase' },
+            ] as const).map(opt => (
+              <button
+                key={opt.v}
+                onClick={() => setTemplateIndustry(opt.v)}
+                className={`px-3 py-1 text-xs rounded-full font-medium flex items-center gap-1.5 transition border ${
+                  templateIndustry === opt.v
+                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                    : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300 hover:text-emerald-600'
+                }`}
+              >
+                <i className={`${opt.icon} text-[10px]`} />
+                <span>{opt.label}</span>
+              </button>
+            ))}
+            <span className="text-[11px] text-slate-400 ml-auto">
+              共 {templates.length} 个模板
+            </span>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 text-blue-700 text-[11px] px-3 py-2 rounded-lg">
+            💡 系统模板是行业标准方案，只读不可执行。点击「使用此模板」克隆一份到你的 SOP，再编辑步骤 / 调整触发条件 / 激活运行。
+          </div>
+        </>
       )}
 
       {featured && (
@@ -386,8 +429,19 @@ export default function SopView({ mode }: { mode: BizMode }) {
                 <h5 className="font-bold text-slate-900 text-sm truncate">{featured.name}</h5>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-[11px] text-emerald-600 font-medium">{featured.trigger_desc}</span>
-                  <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{featured.mode}</span>
-                  {featured.is_template && <span className="text-[10px] bg-blue-50 text-blue-600 font-medium px-1.5 py-0.5 rounded">系统模板</span>}
+                  {featured.is_template && (
+                    <>
+                      <span className="text-[10px] bg-blue-50 text-blue-600 font-medium px-1.5 py-0.5 rounded">系统模板</span>
+                      {(() => {
+                        const ib = industryBadge(featured.mode)
+                        return ib ? (
+                          <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${ib.cls}`}>
+                            <i className={`${ib.icon} text-[8px] mr-0.5`} />{ib.label}
+                          </span>
+                        ) : null
+                      })()}
+                    </>
+                  )}
                   {!featured.is_template && (featured.scope === 'mine'
                     ? <span className="text-[10px] bg-indigo-50 text-indigo-600 font-medium px-1.5 py-0.5 rounded">🔵 仅我的客户</span>
                     : <span className="text-[10px] bg-amber-50 text-amber-600 font-medium px-1.5 py-0.5 rounded">🟢 全局系统</span>
@@ -476,7 +530,15 @@ export default function SopView({ mode }: { mode: BizMode }) {
                   </div>
                 </div>
                 {sop.is_template ? (
-                  <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-medium shrink-0">模板</span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-medium">模板</span>
+                    {(() => {
+                      const ib = industryBadge(sop.mode)
+                      return ib ? (
+                        <span className={`text-[9px] font-medium px-1 py-0.5 rounded border ${ib.cls}`}>{ib.label}</span>
+                      ) : null
+                    })()}
+                  </div>
                 ) : sop.active ? (
                   <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 mt-1" />
                 ) : (
@@ -673,13 +735,6 @@ export default function SopView({ mode }: { mode: BizMode }) {
                   <input type="number" min={0} value={editing.trigger_min_spend} onChange={e => setEditing({ ...editing, trigger_min_spend: Number(e.target.value) })} className={inputCls} />
                 </div>
               )}
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">业务模式</label>
-                <select value={editing.mode} onChange={e => setEditing({ ...editing, mode: e.target.value as BizMode })} className={inputCls}>
-                  <option value="retail">C 端零售</option>
-                  <option value="service">B 端企服</option>
-                </select>
-              </div>
               {/* scope 下拉：仅 admin 可见；非 admin 由后端强制 scope=mine */}
               {myMeta?.is_admin && (
                 <div>

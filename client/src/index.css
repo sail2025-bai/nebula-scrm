@@ -37,3 +37,154 @@
 input[type='checkbox'] {
   accent-color: #059669;
 }
+
+/* ============ Public 页专用主题样式 ============ */
+
+/* 衬线展示字体栈（券面值/大标题用，离线友好） */
+.font-display {
+  font-family: "Playfair Display", "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", Georgia, serif;
+  letter-spacing: -0.02em;
+}
+
+/* Public 页面背景层：多层柔光 + 网格纹理 */
+.public-bg {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 10%, rgba(253, 230, 138, 0.35), transparent 60%),
+    radial-gradient(ellipse 60% 50% at 85% 25%, rgba(251, 199, 210, 0.4), transparent 55%),
+    radial-gradient(ellipse 70% 60% at 50% 90%, rgba(252, 165, 165, 0.25), transparent 60%),
+    linear-gradient(160deg, #fef3e7 0%, #fde8e4 40%, #fdf2f8 80%, #fff7ed 100%);
+}
+
+/* 背景装饰光球 */
+.public-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 12% 22%, rgba(251, 191, 36, 0.18) 0, transparent 36%),
+    radial-gradient(circle at 92% 18%, rgba(244, 114, 182, 0.22) 0, transparent 30%),
+    radial-gradient(circle at 78% 78%, rgba(168, 85, 247, 0.12) 0, transparent 40%),
+    radial-gradient(circle at 22% 85%, rgba(251, 146, 60, 0.15) 0, transparent 38%);
+  animation: public-bg-drift 18s ease-in-out infinite alternate;
+}
+
+.public-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(180, 83, 9, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(180, 83, 9, 0.045) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: radial-gradient(ellipse 60% 50% at 50% 50%, black 30%, transparent 80%);
+}
+
+@keyframes public-bg-drift {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(-12px, 8px, 0) scale(1.03); }
+  100% { transform: translate3d(8px, -6px, 0) scale(0.99); }
+}
+
+/* 入场渐入动画 */
+@keyframes fade-rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pop-in {
+  0%   { opacity: 0; transform: scale(0.8); }
+  60%  { opacity: 1; transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5); }
+  70%  { box-shadow: 0 0 0 10px rgba(245, 158, 11, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+}
+@keyframes float-soft {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-4px); }
+}
+
+.animate-fade-rise { animation: fade-rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-pop-in    { animation: pop-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+.animate-float     { animation: float-soft 4s ease-in-out infinite; }
+
+/* 金色渐变文字 */
+.text-gold {
+  background: linear-gradient(135deg, #b45309 0%, #d97706 30%, #f59e0b 50%, #d97706 70%, #b45309 100%);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 3s linear infinite;
+}
+
+/* 金色边框卡片 */
+.card-gold {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid rgba(217, 119, 6, 0.2);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.8) inset,
+    0 20px 40px -12px rgba(180, 83, 9, 0.25),
+    0 8px 16px -8px rgba(180, 83, 9, 0.15);
+}
+
+/* 券面值大字效果 */
+.coupon-value {
+  line-height: 0.9;
+  font-weight: 800;
+  background: linear-gradient(145deg, #1c1917 0%, #451a03 40%, #92400e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* 券面左侧折角效果 */
+.coupon-notch {
+  position: relative;
+}
+.coupon-notch::before,
+.coupon-notch::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  background: inherit;
+  border-radius: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+}
+.coupon-notch::before { left: -7px; }
+.coupon-notch::after  { right: -7px; }
+
+/* CTA 涟漪按钮 */
+.btn-cta {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.btn-cta::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 30%, rgba(255,255,255,0.35) 50%, transparent 70%);
+  transform: translateX(-100%);
+  transition: transform 0.8s ease;
+}
+.btn-cta:hover::after { transform: translateX(100%); }
+
+/* 表单输入聚焦发光 */
+.field-glow:focus-within {
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.18), 0 2px 6px rgba(180, 83, 9, 0.08);
+  border-color: rgba(217, 119, 6, 0.5) !important;
+}

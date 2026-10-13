@@ -28,64 +28,35 @@ export interface ModeMeta {
   ordersLabel: string
 }
 
-export const MODE_META: Record<BizMode, ModeMeta> = {
-  service: {
-    label: 'B端·线索与大客户',
-    shortLabel: 'B端大客户',
-    icon: 'fa-solid fa-briefcase',
-    orgBadge: '企',
-    orgName: '知行智远·企服咨询与解决方案',
-    orgSub: '已授权 18 位大客户顾问与售前专家',
-    staffWord: '顾问',
-    revenueTitle: '本月私域转化签约商机',
-    revenueIcon: 'fa-solid fa-file-contract',
-    revenueSub1Label: '平均单笔商机金额',
-    revenueSub2Label: '方案转化率',
-    metric1Label: '商机预估价值',
-    metric2Label: '顾问跟进轮次',
-    valueColTitle: '预估商机预算',
-    funnelTitle: 'B端线索MQL到合同签约漏斗',
-    funnelSummary: '商机推进速度高于同行业 +24.6%',
-    trendDesc: '追踪官网白皮书下载、广告留资、行业峰会名片、转介绍活码等全触点获客',
-    taskTitle: '今日专属顾问执行 SOP 任务',
-    sopBadge: 'B端大客户培育与商机推进流',
-    sopDesc: '以专业内容、决策人穿透、一对一诊断为核心驱动线索从 MQL 晋级为 SQL 并签约',
-    docBtn: '发送资料/方案',
-    meetingBtn: '邀约会面/诊断',
-    benefitBtn: '试听/体验权限',
-    spendLabel: '预估商机预算',
-    ordersLabel: '跟进轮次'
-  },
-  retail: {
-    label: 'C端·消费与会员零售',
-    shortLabel: 'C端零售',
-    icon: 'fa-solid fa-cart-shopping',
-    orgBadge: '美',
-    orgName: '美诺美妆·品牌企微总部',
-    orgSub: '已授权 18 个门店导购与私域客服',
-    staffWord: '导购',
-    revenueTitle: '本月私域专属转化 GMV',
-    revenueIcon: 'fa-solid fa-hand-holding-dollar',
-    revenueSub1Label: '客单价',
-    revenueSub2Label: '复购贡献率',
-    metric1Label: '私域累计消费',
-    metric2Label: '商城下单频次',
-    valueColTitle: '私域累计消费',
-    funnelTitle: '公域引流转私域首购漏斗',
-    funnelSummary: '首购转化率高于行业基准 +18.4%',
-    trendDesc: '实时追踪包裹卡、门店扫码、社媒投流等渠道获客',
-    taskTitle: '今日门店导购执行 SOP 任务',
-    sopBadge: 'C端快消高频触达与首购SOP',
-    sopDesc: '基于优惠券、限时秒杀、包裹卡福利快速激发首次购买与社群裂变',
-    docBtn: '发送商品画册',
-    meetingBtn: '预约到店体验',
-    benefitBtn: '发放代金优惠券',
-    spendLabel: '私域累计消费',
-    ordersLabel: '下单频次'
-  }
+export const MODE_META: ModeMeta = {
+  label: '私域增长运营',
+  shortLabel: '私域运营',
+  icon: 'fa-solid fa-users-viewfinder',
+  orgBadge: '星',
+  orgName: '逸云企微 · 私域增长引擎',
+  orgSub: '已授权运营团队',
+  staffWord: '运营',
+  revenueTitle: '本月私域转化业绩',
+  revenueIcon: 'fa-solid fa-hand-holding-dollar',
+  revenueSub1Label: '客单价/单商机',
+  revenueSub2Label: '转化率',
+  metric1Label: '私域累计消费/商机',
+  metric2Label: '客户互动频次',
+  valueColTitle: '客户价值',
+  funnelTitle: '全渠道获客转私域转化漏斗',
+  funnelSummary: '转化效率高于行业基准',
+  trendDesc: '追踪活码、包裹卡、门店扫码、社媒投流等全触点获客',
+  taskTitle: '今日 SOP 待执行任务',
+  sopBadge: '私域全链路增长 SOP',
+  sopDesc: '基于活码、社群、优惠券、秒杀自动化驱动客户从加好友到复购的全旅程',
+  docBtn: '发送资料/商品画册',
+  meetingBtn: '邀约会面/预约体验',
+  benefitBtn: '发放福利/优惠券',
+  spendLabel: '客户价值',
+  ordersLabel: '互动频次'
 }
 
-export type Stage = 'new' | 'mature' | 'loyal' | 'churn'
+export type Stage = 'new' | 'contacted' | 'intended' | 'trying' | 'mature' | 'paid' | 'loyal' | 'retained' | 'churn' | 'lost' | string
 
 export interface StageMetaEntry {
   label: string
@@ -93,19 +64,17 @@ export interface StageMetaEntry {
   dot: string
 }
 
-export const STAGE_META_BY_MODE: Record<BizMode, Record<Stage, StageMetaEntry>> = {
-  retail: {
-    new: { label: '新手成长期', badge: 'bg-teal-100 text-teal-800', dot: 'bg-teal-500' },
-    mature: { label: '成长成熟期', badge: 'bg-blue-100 text-blue-800', dot: 'bg-blue-500' },
-    loyal: { label: '高忠诚VIP', badge: 'bg-emerald-100 text-emerald-800', dot: 'bg-emerald-500' },
-    churn: { label: '流失预警', badge: 'bg-rose-100 text-rose-800', dot: 'bg-rose-500' }
-  },
-  service: {
-    new: { label: '新线索初步沟通', badge: 'bg-teal-100 text-teal-800', dot: 'bg-teal-500' },
-    mature: { label: '方案报价阶段', badge: 'bg-blue-100 text-blue-800', dot: 'bg-blue-500' },
-    loyal: { label: '已签约交付', badge: 'bg-emerald-100 text-emerald-800', dot: 'bg-emerald-500' },
-    churn: { label: '停滞/流失预警', badge: 'bg-rose-100 text-rose-800', dot: 'bg-rose-500' }
-  }
+export const STAGE_META: Record<string, StageMetaEntry> = {
+  new:      { label: '新增好友',     badge: 'bg-teal-100 text-teal-800',  dot: 'bg-teal-500' },
+  contacted:{ label: '已初步沟通',   badge: 'bg-sky-100 text-sky-800',    dot: 'bg-sky-500' },
+  intended: { label: '意向明确',     badge: 'bg-indigo-100 text-indigo-800', dot: 'bg-indigo-500' },
+  trying:   { label: '体验/试用',     badge: 'bg-violet-100 text-violet-800', dot: 'bg-violet-500' },
+  mature:   { label: '成长期',       badge: 'bg-blue-100 text-blue-800',  dot: 'bg-blue-500' },
+  paid:     { label: '已成交/首购',   badge: 'bg-amber-100 text-amber-800', dot: 'bg-amber-500' },
+  loyal:    { label: '高忠诚VIP',    badge: 'bg-emerald-100 text-emerald-800', dot: 'bg-emerald-500' },
+  retained: { label: '留存老客',     badge: 'bg-green-100 text-green-800', dot: 'bg-green-500' },
+  churn:    { label: '流失预警',     badge: 'bg-rose-100 text-rose-800',  dot: 'bg-rose-500' },
+  lost:     { label: '已流失',       badge: 'bg-slate-100 text-slate-800', dot: 'bg-slate-500' }
 }
 
 export interface FunnelStep {
@@ -115,28 +84,19 @@ export interface FunnelStep {
   color: string
 }
 
-export const FUNNEL_BY_MODE: Record<BizMode, FunnelStep[]> = {
-  service: [
-    { name: '1. 公域广告/官网/展会留资', count: '10,800', pct: '100%', color: 'bg-slate-400' },
-    { name: '2. 扫码添加企微咨询顾问', count: '3,240 (30.0%)', pct: '62%', color: 'bg-teal-500' },
-    { name: '3. 需求清洗与方案初审 (SQL)', count: '2,150 (66.3%)', pct: '44%', color: 'bg-emerald-500' },
-    { name: '4. 方案演示/深度试用/线下面谈', count: '1,120 (52.1%)', pct: '28%', color: 'bg-brand-600' },
-    { name: '5. 商务谈判并签约付费', count: '353 (31.5%)', pct: '15%', color: 'bg-amber-500' }
-  ],
-  retail: [
-    { name: '1. 公域触达/包裹卡曝光', count: '12,500', pct: '100%', color: 'bg-slate-400' },
-    { name: '2. 扫码发起好友申请', count: '4,120 (32.9%)', pct: '65%', color: 'bg-teal-500' },
-    { name: '3. 企微自动通过并留存', count: '3,650 (88.6%)', pct: '55%', color: 'bg-emerald-500' },
-    { name: '4. 进VIP社群并领券', count: '1,980 (54.2%)', pct: '38%', color: 'bg-brand-600' },
-    { name: '5. 7天内产生私域首购', count: '842 (42.5%)', pct: '22%', color: 'bg-amber-500' }
-  ]
-}
+export const FUNNEL: FunnelStep[] = [
+  { name: '1. 公域触达 / 活码曝光', count: '12,500', pct: '100%', color: 'bg-slate-400' },
+  { name: '2. 扫码添加企微', count: '4,120 (32.9%)', pct: '65%', color: 'bg-teal-500' },
+  { name: '3. 企微自动通过并留存', count: '3,650 (88.6%)', pct: '55%', color: 'bg-emerald-500' },
+  { name: '4. 进群 / 领券 / 启动 SOP', count: '1,980 (54.2%)', pct: '38%', color: 'bg-brand-600' },
+  { name: '5. 7天内产生首购 / 签约', count: '842 (42.5%)', pct: '22%', color: 'bg-amber-500' }
+]
 
 export interface AuthUser {
   id: number
   name: string
   account: string
-  businessMode: BizMode
+  businessMode?: BizMode | null
   wecomUserid?: string
 }
 
@@ -178,7 +138,7 @@ export interface Tag {
   id: number
   name: string
   category: string
-  mode: BizMode
+
   count?: number
 }
 
@@ -187,11 +147,21 @@ export interface FollowUp {
   customer_id: number
   staff_id: number | null
   staffName?: string
+  customerName?: string
+  customerNick?: string
   type: 'wechat' | 'call' | 'visit' | 'gift' | 'note'
   content: string
   outcome: string | null
   next_followup_at: string | null
   created_at: string
+}
+
+export interface FollowUpSummary {
+  pending: number | null
+  done: number | null
+  overdue: number | null
+  today: number | null
+  unassigned?: number | null
 }
 
 export interface TimelineItem {
@@ -206,6 +176,12 @@ export interface Staff {
   id: number
   name: string
   role: string
+  wecom_userid?: string | null
+  avatar_url?: string | null
+  position?: string | null
+  department?: string | null
+  customer_count?: number
+  pending_followups?: number
 }
 
 export interface Segment {
@@ -214,7 +190,7 @@ export interface Segment {
   description: string
   conditions: SegmentConditions
   count: number
-  mode: BizMode
+
   created_at: string
 }
 
@@ -236,7 +212,7 @@ export interface WechatGroup {
   today_messages: number
   sop_status: string
   health_score: number
-  mode: BizMode
+
   wecomChatId?: string | null
   dismissed?: number
   created_at?: string
@@ -251,7 +227,7 @@ export interface Broadcast {
   target_count: number
   sent_rate: number
   status: string
-  mode: BizMode
+
   created_at: string
 }
 
@@ -269,8 +245,10 @@ export interface Sop {
   run_count: number
   conversion: number
   active: number
-  mode: BizMode
+
   is_template?: number
+  /** 行业标签：retail=零售/C端，service=服务业/B端，null=未标记（自建 SOP 通常为 null） */
+  mode?: 'retail' | 'service' | null
   /** 作用域: all=全局对全部客户生效（仅admin）, mine=仅创建者名下客户 */
   scope?: 'all' | 'mine'
   created_by?: number | null
@@ -445,7 +423,7 @@ export interface SeasLead {
   owner_staff_id: number | null
   ownerName: string | null
   claimed_at: string | null
-  mode: BizMode
+
   created_at: string
 }
 
@@ -458,7 +436,10 @@ export interface QrCode {
   auto_tags: string[]
   scan_count: number
   active: number
-  mode: BizMode
+
+  target_type?: string | null
+  target_id?: number | null
+  cta_type?: string  // 'hybrid' | 'target_page' | 'add_staff'
   created_at: string
 }
 
@@ -468,7 +449,7 @@ export interface SimulateEventPayload {
   staffId: number | null
   channel?: string
   tags?: string[]
-  mode: BizMode
+
 }
 
 export interface Coupon {
@@ -483,7 +464,7 @@ export interface Coupon {
   redeemed_count: number
   start_at: string
   end_at: string
-  mode: BizMode
+
   active: number
   created_at: string
   issues?: CouponIssue[]
@@ -543,6 +524,30 @@ export interface SeckillActivity {
 export type OrderStatus = 'pending' | 'paid' | 'shipped' | 'completed' | 'cancelled' | 'refunded'
 export type OrderSource = 'manual' | 'seckill' | 'coupon' | 'channels_shop' | 'youzan' | 'weimeng' | 'wecom_mini' | 'sop' | 'ext_api'
 
+export interface Address {
+  id: number
+  customer_id: number
+  name: string
+  phone?: string | null
+  province?: string | null
+  city?: string | null
+  district?: string | null
+  detail: string
+  is_default: number
+  created_at?: string | null
+}
+
+export interface OrderItem {
+  id: number
+  order_id: number
+  product_id: number
+  product_name: string
+  product_image?: string | null
+  price: number
+  quantity: number
+  subtotal: number
+}
+
 export interface Order {
   id: number
   order_no: string
@@ -561,12 +566,20 @@ export interface Order {
   status_color?: string
   product_name: string | null
   product_image: string | null
+  item_count?: number
+  items_json?: string | null
   remark: string | null
   order_at: string
   paid_at: string | null
   shipped_at: string | null
   completed_at: string | null
   created_at: string
+  shipping_no?: string | null
+  shipping_company?: string | null
+  address_id?: number | null
+  address_snapshot?: string | null
+  items?: OrderItem[]
+  address?: Address | null
 }
 
 
@@ -582,3 +595,16 @@ export interface CustomerTimelineEntry {
   icon?: string
   color?: string
 }
+
+// === Phase 1: 自建商城 ===
+export interface Category {
+  id: number; name: string; icon?: string | null; sort_order: number; active: number; created_at: string | null;
+}
+export interface Product {
+  id: number; name: string; category_id: number | null; category_name?: string | null;
+  price: number; original_price: number | null; stock: number; sold: number;
+  description: string; image_url: string | null; images: string[]; tag: string;
+  sku: string | null; active: number; created_at: string | null; updated_at: string | null;
+}
+export interface CartItem { cart_id: number; quantity: number; product: Product }
+export interface Cart { items: CartItem[]; total: number; count: number }

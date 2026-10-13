@@ -29,23 +29,56 @@ import seckillRouter from './routes/seckill.js'
 import publicRouter from './routes/public.js'
 import extRouter from './routes/ext.js'
 import ordersRouter from './routes/orders.js'
+import productsRouter from './routes/products.js'
+import addressesRouter from './routes/addresses.js'
 import msgauditRouter from './routes/msgaudit.js'
+import uploadRouter from './routes/upload.js'
+import payRouter from './routes/pay.js'
 import reportsRouter from './routes/reports.js'
 import openapiRouter, { tokenRouter } from './routes/openapi.js'
 import mcpRouter from './mcp-http.js'
+
+// === P0-1: Node.js 进程级异常守护（Express 4 async throw 会变成 unhandledRejection 进而 crash 进程）===
+process.on('unhandledRejection', (reason, promise) => {
+  log('critical', 'unhandledRejection', reason?.message || reason)
+  if (reason?.stack) console.error(reason.stack)
+  // 不 process.exit(1) — 让进程继续活，当前挂起的请求客户端会超时（返回 502），
+  // 但后续请求不受影响。生产可改成优雅 shutdown。
+})
+process.on('uncaughtException', (err) => {
+  log('critical', 'uncaughtException', `${err.message}\n${err.stack || ''}`)
+  // uncaughtException 后 Node.js 内部状态可能损坏 — 生产建议 exit，开发环境继续跑方便调试
+  if (process.env.NODE_ENV === 'prod') {
+    setTimeout(() => process.exit(1), 1000) // 给日志刷盘留时间
+  }
+})
 
 const app = express()
 
 // --- 基础安全 & 中间件 ---
 app.use(helmet({ contentSecurityPolicy: false })) // SPA 用 react-chartjs 等需要 inline eval
-app.use(cors({ origin: process.env.CORS_ORIGIN || '*', credentials: true }))
+// --- CORS 安全（P0-3）---
+// 生产必须显式设 CORS_ORIGIN 环境变量；开发默认 localhost:5173
+// 空字符串或 'false' 表示完全禁止跨域
+const corsOriginEnv = process.env.CORS_ORIGIN
+let corsOrigin
+if (corsOriginEnv === undefined) {
+  corsOrigin = process.env.NODE_ENV === 'prod' ? false : ['http://localhost:5173', 'http://127.0.0.1:5173']
+} else if (corsOriginEnv === 'false' || corsOriginEnv === '') {
+  corsOrigin = false
+} else {
+  corsOrigin = corsOriginEnv.split(',').map(s => s.trim()).filter(Boolean)
+}
+app.use(cors({ origin: corsOrigin, credentials: true }))
 app.use(express.json({ limit: '1mb' }))
 app.use(express.urlencoded({ extended: true, limit: '1mb' }))
 
-// --- 请求 ID 追踪（P3）---
+// --- 请求 ID 追踪 + API 版本头 ---
+const APP_VERSION = '2.2.0'
 app.use((req, res, next) => {
   req.id = req.header('X-Request-Id') || crypto.randomUUID()
   res.setHeader('X-Request-Id', req.id)
+  res.setHeader('X-API-Version', APP_VERSION)
   next()
 })
 
@@ -65,10 +98,19 @@ const authLimiter = rateLimit({
 })
 app.use('/api/auth', authLimiter)
 
-// --- 企微/视频号 webhook 防刷（P0-3 轻量版，IP 白名单由 wecom/orders 路由内部做）---
+// --- 企微/视频号 webhook 防刷 ---
 const webhookLimiter = rateLimit({ windowMs: 60 * 1000, max: 60, message: { error: 'Webhook 过于频繁' } })
 app.use('/api/wecom/webhook', webhookLimiter)
 app.use('/api/orders/webhook', webhookLimiter)
+
+// --- 高价值写接口防刷（P2-3 扩展 rate-limit）---
+// 防止批量灌客户、批量发 SOP、连续点秒杀抢单
+const writeLimiter = rateLimit({ windowMs: 60 * 1000, max: 120, message: { error: '操作过于频繁，请稍后再试' } })
+app.use('/api/customers', writeLimiter)       // POST 批量灌客户
+app.use('/api/sops', writeLimiter)            // 手动 run SOP
+app.use('/api/broadcasts', writeLimiter)      // 批量发消息
+app.use('/api/seckill/:id/grab', rateLimit({ windowMs: 10 * 1000, max: 5, message: { error: '抢单过于频繁' }, standardHeaders: true, legacyHeaders: false }))
+app.use('/api/seas', writeLimiter)            // 线索 import/convert
 
 // --- 初始化 DB ---
 initSchema()
@@ -79,6 +121,7 @@ loadConfigFromEnv()
 
 // ① 公开路由（无需登录）
 app.use('/api/auth', authRouter)           // login/register/wxlogin 返回 token
+app.use('/api/pay', payRouter)                // 支付回调（公开，微信主动 POST）
 app.use('/api/public', publicRouter)       // 公开页面 / 二维码落地页
 app.use('/api/health', (req, res) => {     // 健康检查（也公开）
   try {
@@ -105,11 +148,6 @@ app.use('/api/health', (req, res) => {     // 健康检查（也公开）
 })
 app.use('/api/channels', (req, res) => {   // 渠道下拉（可选鉴权）
   optionalAuth(req, res, () => {
-    const mode = req.query.mode
-    if (mode === 'retail' || mode === 'service') {
-      const rows = db.prepare('SELECT DISTINCT channel FROM customers WHERE channel IS NOT NULL AND customer_type = ? ORDER BY channel').all(mode)
-      return res.json(rows.map((r) => r.channel))
-    }
     const rows = db.prepare('SELECT DISTINCT channel FROM customers WHERE channel IS NOT NULL ORDER BY channel').all()
     res.json(rows.map((r) => r.channel))
   })
@@ -122,6 +160,10 @@ app.use('/api/ext', extRouter)
 //    内部路由会做签名校验 + IP 白名单（P0-3 在 wecom/orders 路由里实现）
 app.use('/api/wecom', wecomRouter)         // 包含 /webhook
 app.use('/api/orders', ordersRouter)      // 包含 /webhook/channels-shop
+app.use('/api/products', productsRouter)
+app.use('/api/addresses', addressesRouter)
+app.use('/api/upload', uploadRouter)
+
 
 // ④ C3: OpenAPI 规范（公开，方便 ERP/CRM 对接方查看）+ C2: Analytics Builder（路由内部再用 requireAuth）
 app.use('/api', openapiRouter)
@@ -136,6 +178,7 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CLIENT_DIST = path.resolve(__dirname, '../../client/dist')
 app.use(express.static(CLIENT_DIST))
+app.use('/uploads', express.static(path.resolve(__dirname, '../uploads'), { maxAge: '7d' }))
 app.get(/^(?!\/api\/).*/, (req, res) => {
   res.sendFile(path.join(CLIENT_DIST, 'index.html'))
 })

@@ -1,4 +1,5 @@
 import express from 'express'
+import { wrapAsync } from '../utils/wrap.js'
 import { db } from '../db.js'
 import { msgAuditPreflight, pollMsgAudit, zeroTodayMessages, recomputeTodayMessages } from '../wecom-msgaudit.js'
 
@@ -34,14 +35,14 @@ router.get('/status', (req, res) => {
   })
 })
 
-router.post('/poll', async (req, res) => {
+router.post('/poll', wrapAsync(async (req, res) => {
   try {
     const result = await pollMsgAudit()
     res.json({ ok: true, ...result })
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message })
   }
-})
+}))
 
 router.post('/recompute', (req, res) => {
   try {

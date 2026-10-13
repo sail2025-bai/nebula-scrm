@@ -1,6 +1,8 @@
 import express from 'express'
+import { wrapAsync } from '../utils/wrap.js'
 import { db, initSchema, now, fmt } from '../db.js'
 import { emit as emitEvent } from '../utils/events.js'
+import { createQrTicket, wecomConfig } from '../wecom.js'
 
 initSchema()
 const router = express.Router()
@@ -227,5 +229,120 @@ router.get('/customer/:code/coupons', (req, res) => {
     coupons: rows
   })
 })
+
+// === 活码公开下载：落地页 URL & PNG 图片 ===
+// 任何人（客户、运营）无需鉴权即可访问，方便海报/物料嵌入
+// CTA 模式：
+//   add_staff    → 扫码直接加顾问（企微官方活码，需企微已连通；未连通时降级为 hybrid）
+//   hybrid       → 落地页 + 顾问卡片 CTA（默认，推荐）
+//   target_page  → 仅落地页（老行为，不带顾问引导）
+//
+// 落地页规则：target_type=seckill → /p/seckill?qr=<id>；coupon 或空 → /p/coupon?qr=<id>
+function buildLandingUrl(q, req) {
+  const page = q.target_type === 'seckill' ? 'seckill' : 'coupon'
+  const protocol = req.protocol || 'http'
+  const host = req.get('x-forwarded-host') || req.get('host') || 'localhost:3001'
+  return `${protocol}://${host}/p/${page}?qr=${q.id}`
+}
+
+// 决定"二维码里写什么 URL"：根据 cta_type + 企微连通状态
+async function resolveQrUrl(q, req) {
+  const cfg = wecomConfig()
+  const connected = cfg && cfg.status === 'connected'
+  const cta = q.cta_type || 'hybrid'
+
+  if (cta === 'add_staff') {
+    if (!connected) {
+      // 企微没连通，降级为 hybrid（落地页 + 顾问卡片）
+      return { url: buildLandingUrl(q, req), cta: 'hybrid', degraded: true }
+    }
+    // 企微已连通，用官方活码 ticket
+    let ticket = q.qr_ticket
+    if (!ticket) ticket = await createQrTicket(q)
+    const url = `https://open.weixin.qq.com/showqrcode?ticket=${encodeURIComponent(ticket)}`
+    return { url, cta: 'add_staff', degraded: false }
+  }
+
+  // hybrid / target_page → 都走落地页
+  return { url: buildLandingUrl(q, req), cta, degraded: false }
+}
+
+// GET /api/public/qrcodes/:id/landing-url
+router.get('/qrcodes/:id/landing-url', wrapAsync(async (req, res) => {
+  const id = Number(req.params.id)
+  const q = db.prepare('SELECT * FROM qr_codes WHERE id = ?').get(id)
+  if (!q) return res.status(404).json({ error: '活码不存在' })
+  const { url, cta, degraded } = await resolveQrUrl(q, req)
+  res.json({
+    ok: true,
+    landing_url: url,
+    cta_type: cta,
+    degraded: degraded || false,
+    target_type: q.target_type || 'coupon',
+    target_id: q.target_id || null,
+    staff_id: q.staff_id || null
+  })
+}))
+
+// GET /api/public/qrcodes/:id/png?size=360
+// 前端 <img src> 或 <a download> 直接使用
+router.get('/qrcodes/:id/png', wrapAsync(async (req, res) => {
+  const id = Number(req.params.id)
+  const q = db.prepare('SELECT * FROM qr_codes WHERE id = ?').get(id)
+  if (!q) return res.status(404).json({ error: '活码不存在' })
+  try {
+    const QrCode = (await import('qrcode')).default
+    const { url } = await resolveQrUrl(q, req)
+    const size = Math.min(600, Math.max(200, Number(req.query.size) || 360))
+    const buf = await QrCode.toBuffer(url, {
+      errorCorrectionLevel: 'M',
+      margin: 2,
+      width: size,
+      color: { dark: '#0f172a', light: '#ffffff' }
+    })
+    res.set({
+      'Content-Type': 'image/png',
+      'Cache-Control': 'public, max-age=3600',
+      'Content-Disposition': `inline; filename="qrcode_${q.id}_${encodeURIComponent(q.name)}.png"`
+    })
+    res.send(buf)
+  } catch (e) {
+    res.status(500).json({ error: '二维码生成失败：' + e.message })
+  }
+}))
+
+// GET /api/public/qrcodes/:id/staff （落地页获取顾问信息用）
+router.get('/qrcodes/:id/staff', (req, res) => {
+  const id = Number(req.params.id)
+  const q = db.prepare('SELECT * FROM qr_codes WHERE id = ?').get(id)
+  if (!q) return res.status(404).json({ error: '活码不存在' })
+  if (!q.staff_id) return res.json({ ok: true, staff: null })
+  const s = db.prepare('SELECT id, name, role, wecom_userid, avatar_url FROM staff WHERE id = ?').get(q.staff_id)
+  if (!s) return res.json({ ok: true, staff: null })
+  res.json({
+    ok: true,
+    staff: { id: s.id, name: s.name, role: s.role || '专属顾问', wecom_userid: s.wecom_userid || null, avatar_url: s.avatar_url || null },
+    cta_type: q.cta_type || 'hybrid',
+    qr_name: q.name
+  })
+})
+
+
+// GET /api/public/coupons/:id （落地页预览券信息，公开只读，不含敏感字段）
+router.get('/coupons/:id', (req, res) => {
+  const id = Number(req.params.id)
+  const c = db.prepare('SELECT id, name, type, value, min_order, description, total_stock, issued_count, start_at, end_at, image_url, active FROM coupons WHERE id = ?').get(id)
+  if (!c || c.active !== 1) return res.status(404).json({ error: '优惠券不存在或已下架' })
+  res.json({ ok: true, ...c })
+})
+
+// GET /api/public/seckill/:id （落地页预览秒杀活动信息，公开只读）
+router.get("/seckill/:id", (req, res) => {
+  const id = Number(req.params.id)
+  const c = db.prepare("SELECT id, title, description, product_name, product_image, stock, sold, price, original_price, start_at, end_at, active FROM seckill_activities WHERE id = ?").get(id)
+  if (!c || c.active !== 1) return res.status(404).json({ error: "秒杀活动不存在或已结束" })
+  res.json({ ok: true, ...c })
+})
+
 
 export default router

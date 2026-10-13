@@ -1,12 +1,21 @@
 import type {
+  Address,
   AuthUser,
   BizMode,
   Broadcast,
+  Category,
+  Cart,
+  CartItem,
   Customer,
   CustomerListResponse,
   CustomerQuery,
   DashboardStats,
   FollowUp,
+  FollowUpSummary,
+  Order,
+  OrderItem,
+  OrderStatus,
+  Product,
   QrCode,
   SeasLead,
   Segment,
@@ -26,8 +35,6 @@ import type {
   WecomConfig,
   WecomEvent,
   WecomStatus,
-  Order,
-  OrderStatus,
   MsgAuditStatus,
   CustomerTimelineEntry,
   ConditionField,
@@ -66,11 +73,22 @@ function emitAuthExpired() {
   try { window.dispatchEvent(new CustomEvent(AUTH_EVENT)) } catch { /* ignore */ }
 }
 
+// 兼容生成 requestId（某些浏览器 crypto.randomUUID 不可用）
+function genRequestId(): string {
+  const c: any = (globalThis as any).crypto
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
+    const r = (Math.random() * 16) | 0
+    const v = ch === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = getToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'X-Request-Id': crypto.randomUUID()
+    'X-Request-Id': genRequestId()
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
@@ -121,7 +139,7 @@ export interface CustomerPayload {
 }
 
 export const api = {
-  register: (payload: { name: string; account: string; password: string; businessMode: BizMode }) =>
+  register: (payload: { name: string; account: string; password: string; businessMode?: string | null }) =>
     request<{ user: AuthUser; token: string }>('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
   login: (payload: { account: string; password: string }) =>
     request<{ user: AuthUser; token: string }>('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
@@ -131,9 +149,8 @@ export const api = {
       body: JSON.stringify(payload)
     }),
 
-  getDashboardStats: (mode: BizMode) => request<DashboardStats>(`/dashboard/stats${toQuery({ mode })}`),
-  getTrend: (days = 7, mode: BizMode = 'retail') =>
-    request<TrendData>(`/dashboard/trend${toQuery({ days, mode })}`),
+  getDashboardStats: () => request<DashboardStats>(`/dashboard/stats`),
+  getTrend: (days = 7) => request<TrendData>(`/dashboard/trend?days=${days}`),
 
   getCustomers: (query: CustomerQuery) => request<CustomerListResponse>(`/customers${toQuery(query)}`),
   getCustomer: (id: number) => request<Customer>(`/customers/${id}`),
@@ -149,25 +166,31 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ids, tagName })
     }),
+  batchAssignStaff: (ids: number[], staff_id: number) =>
+    request<{ ok: boolean; affected: number }>('/customers/batch-assign-staff', { method: 'POST', body: JSON.stringify({ ids, staff_id }) }),
+  batchStage: (ids: number[], stage: string) =>
+    request<{ ok: boolean; affected: number }>('/customers/batch-stage', { method: 'POST', body: JSON.stringify({ ids, stage }) }),
+  batchDelete: (ids: number[]) =>
+    request<{ ok: boolean; affected: number }>('/customers/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) }),
 
-  getTags: (mode: BizMode) => request<Tag[]>(`/tags${toQuery({ mode })}`),
-  createTag: (name: string, category: string, mode: BizMode) =>
-    request<Tag>('/tags', { method: 'POST', body: JSON.stringify({ name, category, mode }) }),
+  getTags: () => request<Tag[]>(`/tags`),
+  createTag: (name: string, category: string, mode?: string | null) =>
+    request<Tag>('/tags', { method: 'POST', body: JSON.stringify({ name, category}) }),
   updateTag: (id: number, name: string, category: string) =>
     request<Tag>(`/tags/${id}`, { method: 'PUT', body: JSON.stringify({ name, category }) }),
   deleteTag: (id: number) => request<{ ok: boolean }>(`/tags/${id}`, { method: 'DELETE' }),
 
-  getSegments: (mode: BizMode) => request<Segment[]>(`/segments${toQuery({ mode })}`),
+  getSegments: () => request<Segment[]>(`/segments`),
   getSegment: (id: number) => request<Segment>(`/segments/${id}`),
-  createSegment: (name: string, description: string, conditions: SegmentConditions, mode: BizMode) =>
-    request<Segment>('/segments', { method: 'POST', body: JSON.stringify({ name, description, conditions, mode }) }),
+  createSegment: (name: string, description: string, conditions: SegmentConditions, mode?: string | null) =>
+    request<Segment>('/segments', { method: 'POST', body: JSON.stringify({ name, description, conditions}) }),
   updateSegment: (id: number, name: string, description: string, conditions: SegmentConditions) =>
     request<Segment>(`/segments/${id}`, { method: 'PUT', body: JSON.stringify({ name, description, conditions }) }),
   deleteSegment: (id: number) => request<{ ok: boolean }>(`/segments/${id}`, { method: 'DELETE' }),
 
-  getGroups: (mode: BizMode) => request<WechatGroup[]>(`/groups${toQuery({ mode })}`),
-  createGroup: (name: string, owner_staff_id: number, mode: BizMode) =>
-    request<WechatGroup>('/groups', { method: 'POST', body: JSON.stringify({ name, owner_staff_id, mode }) }),
+  getGroups: () => request<WechatGroup[]>(`/groups`),
+  createGroup: (name: string, owner_staff_id: number, mode?: string | null) =>
+    request<WechatGroup>('/groups', { method: 'POST', body: JSON.stringify({ name, owner_staff_id}) }),
   updateGroup: (id: number, payload: Partial<{ name: string; owner_staff_id: number; member_count: number; today_messages: number; sop_status: string }>) =>
     request<WechatGroup>(`/groups/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteGroup: (id: number) => request<{ ok: boolean }>(`/groups/${id}`, { method: 'DELETE' }),
@@ -176,19 +199,33 @@ export const api = {
   getGroupMembers: (id: number) =>
     request<{ id: number; group_id: number; external_userid: string; name: string }[]>(`/groups/${id}/members`),
 
-  getFollowUps: (customerId: number) => request<FollowUp[]>(`/follow-ups${toQuery({ customer_id: customerId })}`),
+  getFollowUps: (params?: { customer_id?: number; staff_id?: number; status?: 'pending' | 'done'; scope?: 'today' | 'overdue' }) => {
+    const qs = toQuery({ ...params })
+    return request<FollowUp[]>(`/follow-ups${qs}`)
+  },
+  getFollowUpsWithSummary: (params?: { status?: 'pending' | 'done'; scope?: 'today' | 'overdue' }) => {
+    const qs = toQuery({ ...params, summary: 1 })
+    return request<{ items: FollowUp[]; summary: FollowUpSummary }>(`/follow-ups${qs}`)
+  },
+  getFollowUpSummary: () => request<FollowUpSummary>('/follow-ups/summary'),
+  assignFollowUp: (id: number) => request<{ ok: boolean }>(`/follow-ups/${id}/assign`, { method: 'POST' }),
   createFollowUp: (payload: { customer_id: number; type: string; content: string; outcome?: string; next_followup_at?: string | null }) =>
     request<FollowUp>('/follow-ups', { method: 'POST', body: JSON.stringify(payload) }),
   deleteFollowUp: (id: number) => request<{ ok: boolean }>(`/follow-ups/${id}`, { method: 'DELETE' }),
   completeFollowUp: (id: number, outcome?: string) => request<{ ok: boolean }>(`/follow-ups/${id}/complete`, { method: 'POST', body: JSON.stringify({ outcome }) }),
 
-  getBroadcasts: (mode: BizMode) => request<Broadcast[]>(`/broadcasts${toQuery({ mode })}`),
-  createBroadcast: (payload: { title: string; type: string; audience_desc: string; message: string; mode: BizMode; conditions?: SegmentConditions }) =>
+  getBroadcasts: () => request<Broadcast[]>(`/broadcasts`),
+  createBroadcast: (payload: { title: string; type: string; audience_desc: string; message: string; mode?: string | null; conditions?: SegmentConditions }) =>
     request<Broadcast>('/broadcasts', { method: 'POST', body: JSON.stringify(payload) }),
 
-  getSops: (mode: BizMode) => request<{ items: Sop[]; _meta: { is_admin: boolean; me: { id: number; account: string; name: string | null; wecom_userid: string | null } | null } }>(`/sops${toQuery({ mode })}`),
-  getSopTemplates: (mode: BizMode) =>
-    request<{ items: Sop[]; _meta?: { is_admin: boolean; me: { id: number; account: string; name: string | null } | null } }>(`/sops${toQuery({ mode, include_templates: 1 })}`),
+  getSops: (industry?: 'retail' | 'service' | null) =>
+    request<{ items: Sop[]; _meta: { is_admin: boolean; me: { id: number; account: string; name: string | null; wecom_userid: string | null } | null } }>(
+      `/sops${toQuery({ include_templates: 1, industry: industry || undefined })}`
+    ),
+  getSopTemplates: (industry?: 'retail' | 'service' | null) =>
+    request<{ items: Sop[]; _meta?: { is_admin: boolean; me: { id: number; account: string; name: string | null } | null } }>(
+      `/sops${toQuery({ include_templates: 1, industry: industry || undefined })}`
+    ),
   getSop: (id: number) => request<Sop>(`/sops/${id}`),
   createSop: (payload: Partial<Sop> & { name: string; trigger_type: string; steps: SopStep[] }) =>
     request<Sop>('/sops', { method: 'POST', body: JSON.stringify(payload) }),
@@ -207,7 +244,12 @@ export const api = {
   getSopConditionMeta: () => request<{ fields: ConditionField[]; operators: Record<string, ConditionOperator[]> }>('/sops/meta/conditions'),
 
   getStaff: () => request<Staff[]>('/staff'),
-  getChannels: (mode: BizMode) => request<string[]>(`/channels${toQuery({ mode })}`),
+  createStaff: (payload: { name: string; role?: string; wecom_userid?: string | null; avatar_url?: string | null }) =>
+    request<Staff>('/staff', { method: 'POST', body: JSON.stringify(payload) }),
+  updateStaff: (id: number, payload: Partial<{ name: string; role: string; wecom_userid: string | null; avatar_url: string | null }>) =>
+    request<Staff>(`/staff/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteStaff: (id: number) => request<{ ok: boolean }>(`/staff/${id}`, { method: 'DELETE' }),
+  getChannels: () => request<string[]>(`/channels`),
 
   getWecomConfig: () => request<WecomConfig>('/wecom/config'),
   saveWecomConfig: (payload: {
@@ -240,8 +282,8 @@ export const api = {
       body: JSON.stringify(payload)
     }),
 
-  getSeasLeads: (mode: BizMode) => request<SeasLead[]>(`/seas${toQuery({ mode })}`),
-  importSeasLeads: (payload: { lines: string[]; mode: BizMode }) =>
+  getSeasLeads: () => request<SeasLead[]>(`/seas`),
+  importSeasLeads: (payload: { lines: string[]; mode?: string | null }) =>
     request<{ imported: number; failed: number }>('/seas/import', { method: 'POST', body: JSON.stringify(payload) }),
   claimSeasLead: (id: number, staff_id: number) =>
     request<SeasLead>(`/seas/${id}/claim`, { method: 'PUT', body: JSON.stringify({ staff_id }) }),
@@ -250,20 +292,20 @@ export const api = {
   returnSeasLead: (id: number) => request<SeasLead>(`/seas/${id}/return`, { method: 'PUT' }),
   deleteSeasLead: (id: number) => request<{ ok: boolean }>(`/seas/${id}`, { method: 'DELETE' }),
 
-  getQrCodes: (mode: BizMode) => request<QrCode[]>(`/qrcodes${toQuery({ mode })}`),
-  createQrCode: (payload: { name: string; channel: string; staff_id?: number | null; auto_tags?: string[]; mode: BizMode }) =>
+  getQrCodes: () => request<QrCode[]>(`/qrcodes`),
+  createQrCode: (payload: { name: string; channel: string; staff_id?: number | null; auto_tags?: string[]; cta_type?: string; target_type?: 'coupon' | 'seckill' | null; target_id?: number | null; mode?: string | null }) =>
     request<QrCode>('/qrcodes', { method: 'POST', body: JSON.stringify(payload) }),
-  updateQrCode: (id: number, payload: Partial<{ name: string; channel: string; staff_id: number | null; auto_tags: string[]; active: number }>) =>
+  updateQrCode: (id: number, payload: Partial<{ name: string; channel: string; staff_id: number | null; auto_tags: string[]; active: number; cta_type: string; target_type: string | null; target_id: number | null }>) =>
     request<QrCode>(`/qrcodes/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteQrCode: (id: number) => request<{ ok: boolean }>(`/qrcodes/${id}`, { method: 'DELETE' }),
   scanQrCode: (id: number, payload: { name?: string }) =>
     request<{ ok: boolean; message: string; customerId: number }>(`/qrcodes/${id}/scan`, { method: 'POST', body: JSON.stringify(payload) }),
 
   exportBackup: () => request<Record<string, unknown>>('/backup/export'),
-  exportCustomersCsv: (mode: BizMode) => request<string>(`/backup/customers.csv${toQuery({ mode })}`),
+  exportCustomersCsv: () => request<string>(`/backup/customers.csv`),
 
   // === P2: 优惠券 ===
-  getCoupons: (mode: BizMode) => request<Coupon[]>(`/coupons${toQuery({ mode })}`),
+  getCoupons: () => request<Coupon[]>(`/coupons`),
   getCoupon: (id: number) => request<Coupon>(`/coupons/${id}`),
   createCoupon: (payload: Partial<Coupon> & { name: string; type: Coupon['type']; value: number; start_at: string; end_at: string }) =>
     request<Coupon>('/coupons', { method: 'POST', body: JSON.stringify(payload) }),
@@ -283,17 +325,29 @@ export const api = {
   toggleSeckill: (id: number) => request<SeckillActivity>(`/seckill/${id}/toggle`, { method: 'PUT' }),
   grabSeckill: (id: number, customer_id: number) =>
     request<{ ok: boolean; price: number; customer_id: number; activity_id: number; title: string; grab_at: string }>(`/seckill/${id}/grab`, { method: 'POST', body: JSON.stringify({ customer_id }) }),
+  getSeckillOrders: (activityId: number, status?: string) =>
+    request<{ activity: SeckillActivity; orders: any[]; total: number }>(`/seckill/${activityId}/orders${toQuery({ status })}`),
+  getAllSeckillOrders: (params?: { status?: string; customer_id?: number }) =>
+    request<any[]>(`/seckill/orders/all${toQuery(params || {})}`),
+  updateSeckillOrderStatus: (id: number, status: 'pending' | 'paid' | 'refunded' | 'cancelled') =>
+    request<{ ok: boolean; id: number; status: string }>(`/seckill/orders/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) }),
+
+  // === 历史日报 ===
+  getDailyReports: (days = 7) =>
+    request<{ count: number; days: number; rows: { id: number; day: string; summary: any; sop_top: any[]; channel_top: any[] }[] }>(`/reports/daily${toQuery({ days })}`),
+  runDailyReport: (day?: string) =>
+    request<{ ok: boolean; day: string; summary: any }>(`/reports/daily/run${toQuery({ day })}`, { method: 'POST' }),
 
 
   // === P3: 订单台账 ===
-  getOrders: (query?: { status?: string; source?: string; customer_id?: number; min_amount?: number; search?: string; page?: number; pageSize?: number }) =>
+  getOrders: (query?: { status?: string; source?: string; customer_id?: number; min_amount?: number; search?: string; start?: string; end?: string; page?: number; pageSize?: number }) =>
     request<{ total: number; page: number; pageSize: number; list: Order[] }>(`/orders${toQuery(query || {})}`),
   getCustomerOrders: (customerId: number) => request<Order[]>(`/orders/customer/${customerId}`),
   getOrder: (id: number) => request<Order>(`/orders/${id}`),
   createOrder: (payload: Partial<Order> & { customer_id: number; amount: number }) =>
     request<Order>('/orders', { method: 'POST', body: JSON.stringify(payload) }),
-  updateOrderStatus: (id: number, status: OrderStatus, remark?: string) =>
-    request<Order>(`/orders/${id}/status`, { method: 'PUT', body: JSON.stringify({ status, remark }) }),
+  updateOrderStatus: (id: number, data: { status: OrderStatus; shipping_no?: string; shipping_company?: string; remark?: string }) =>
+    request<Order>(`/orders/${id}/status`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteOrder: (id: number) => request<{ ok: boolean }>(`/orders/${id}`, { method: 'DELETE' }),
   recordPurchase: (customerId: number, payload: { order_no: string; amount: number; coupon_code?: string }) =>
     request<{
@@ -316,4 +370,37 @@ export const api = {
         remark: '运营手动记录'
       })
     }),
+
+  // === Phase 1: 自建商城 ===
+  getProducts: (query?: { category?: number; q?: string; all?: 1; page?: number; pageSize?: number }) =>
+    request<{ items: Product[]; total?: number; page?: number; pageSize?: number; totalPages?: number }>(`/products${toQuery(query || {})}`),
+  getProduct: (id: number) => request<Product>(`/products/${id}`),
+  createProduct: (payload: Partial<Product> & { name: string; price: number }) =>
+    request<Product>('/products', { method: 'POST', body: JSON.stringify(payload) }),
+  updateProduct: (id: number, payload: Partial<Product>) =>
+    request<Product>(`/products/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteProduct: (id: number) => request<{ ok: boolean }>(`/products/${id}`, { method: 'DELETE' }),
+  toggleProduct: (id: number) => request<Product>(`/products/${id}/toggle`, { method: 'PUT' }),
+  getCategories: () => request<{ items: Category[] }>('/products/categories'),
+  createCategory: (payload: { name: string; icon?: string; sort_order?: number }) =>
+    request<Category>('/products/categories', { method: 'POST', body: JSON.stringify(payload) }),
+  deleteCategory: (id: number) => request<{ ok: boolean }>(`/products/categories/${id}`, { method: 'DELETE' }),
+  getCart: (customerId: number) => request<Cart>(`/products/cart?customer_id=${customerId}`),
+  addToCart: (customerId: number, productId: number, quantity = 1) =>
+    request<{ ok: boolean }>('/products/cart', { method: 'POST', body: JSON.stringify({ customer_id: customerId, product_id: productId, quantity }) }),
+  updateCartItem: (cartId: number, quantity: number) =>
+    request<{ ok: boolean }>(`/products/cart/${cartId}`, { method: 'PUT', body: JSON.stringify({ quantity }) }),
+  removeCartItem: (cartId: number) => request<{ ok: boolean }>(`/products/cart/${cartId}`, { method: 'DELETE' }),
+  clearCart: (customerId: number) =>
+    request<{ ok: boolean }>('/products/cart/clear', { method: 'DELETE', body: JSON.stringify({ customer_id: customerId }) }),
+
+  // === 收货地址 ===
+  getAddressesByCustomer: (customerId: number) =>
+    request<{ items: Address[] }>(`/addresses?customer_id=${customerId}`).then((r) => r.items || []),
+  getAddress: (id: number) => request<Address>(`/addresses/${id}`),
+  createAddress: (data: Partial<Address>) =>
+    request<Address>('/addresses', { method: 'POST', body: JSON.stringify(data) }),
+  updateAddress: (id: number, data: Partial<Address>) =>
+    request<Address>(`/addresses/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteAddress: (id: number) => request<{ ok: boolean }>(`/addresses/${id}`, { method: 'DELETE' }),
 }

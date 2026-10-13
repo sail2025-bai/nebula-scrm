@@ -143,30 +143,57 @@ export function loadConfigFromEnv() {
 
 const staffCache = new Map()
 
+/** 模拟模式下生成一批"稳定"的企微 fake 通讯录（每次一样，方便 preview 看效果） */
+function fakeStaffDirectory() {
+  return [
+    { userid: 'linchen',   name: '林晨',   position: '私域运营总监',  department: [100, 101] },
+    { userid: 'wangfang',  name: '王芳',   position: '资深美妆顾问',  department: [102] },
+    { userid: 'zhoumeng',  name: '周萌',   position: '客服组长',      department: [102, 103] },
+    { userid: 'tangwei',   name: '唐薇',   position: '门店店长',      department: [104] },
+    { userid: 'chenghao',  name: '程皓',   position: '社群运营',      department: [101] },
+    { userid: 'jiyun',     name: '纪云',   position: '直播主理人',    department: [105] },
+    { userid: 'zhangsan',  name: '张三',   position: '仓管',          department: [106] },
+    { userid: 'lisi',      name: '李四',   position: '配送员',        department: [106] },
+  ]
+}
+
 export async function syncStaffWecom() {
   const cfg = wecomConfig()
-  if (!cfg || !cfg.corp_id || !cfg.corp_secret) {
-    log('wecom', 'warn', 'syncStaffWecom 跳过：未配置企微凭据')
-    return 0
+  const simulated = !cfg?.corp_id || !cfg?.corp_secret || cfg.status === 'simulated'
+
+  let users = []
+  if (simulated) {
+    log('wecom', 'info', 'syncStaffWecom → 模拟模式，生成 fake 通讯录')
+    users = fakeStaffDirectory()
+  } else {
+    try {
+      const data = await callWecomApi('cgi-bin/user/simplelist', { department_id: 1, fetch_child: 1 })
+      users = data.userlist || []
+    } catch (e) {
+      log('wecom', 'warn', `syncStaffWecom 企微接口失败 → 降级模拟: ${e.message}`)
+      users = fakeStaffDirectory()
+    }
   }
-  const data = await callWecomApi('cgi-bin/user/simplelist', { department_id: 1, fetch_child: 1 })
-  const users = data.userlist || []
+
   let upserted = 0
   for (const u of users) {
     const existing = db.prepare('SELECT id FROM staff WHERE wecom_userid = ?').get(u.userid)
     if (existing) {
-      db.prepare('UPDATE staff SET name=?, position=?, department=? WHERE id=?').run(
-        u.name, u.position || null, (u.department || []).join(','), existing.id
+      db.prepare('UPDATE staff SET name=?, position=?, department=?, avatar_url=COALESCE(avatar_url, ?) WHERE id=?').run(
+        u.name, u.position || null, (u.department || []).join(','),
+        `https://picsum.photos/seed/staff-${u.userid}/80/80`,
+        existing.id
       )
     } else {
-      db.prepare('INSERT INTO staff (name, wecom_userid, role, position) VALUES (?, ?, ?, ?)').run(
-        u.name, u.userid, '企微同步', u.position || null
+      db.prepare('INSERT INTO staff (name, wecom_userid, role, position, department, avatar_url) VALUES (?, ?, ?, ?, ?, ?)').run(
+        u.name, u.userid, '顾问', u.position || null, (u.department || []).join(','),
+        `https://picsum.photos/seed/staff-${u.userid}/80/80`
       )
     }
     upserted++
   }
   db.prepare('UPDATE wecom_config SET last_sync_at = CURRENT_TIMESTAMP WHERE id = 1').run()
-  log('wecom', 'info', `企微通讯录同步完成：${upserted} 人`)
+  log('wecom', 'info', `企微通讯录同步完成：${upserted} 人${simulated ? '（模拟）' : ''}`)
   return upserted
 }
 
@@ -190,6 +217,20 @@ export async function sendBroadcast(broadcast, onProgress) {
   let sendRes = null
   try {
     const staff = db.prepare('SELECT id, name, wecom_userid FROM staff ORDER BY id').all()
+    const eligibleStaff = staff.filter(s => s.wecom_userid)
+    if (eligibleStaff.length === 0) {
+      // 企微已连通但没有任何员工绑定 wecom_userid → 标记失败
+      db.prepare('UPDATE broadcasts SET status=?, fail_reason=? WHERE id=?').run(
+        '下发失败', '企微已连通但无员工绑定 wecom_userid，请先在员工管理里同步企微', broadcast.id
+      )
+      db.prepare(`INSERT INTO wecom_events (event_type, change_type, payload, handled) VALUES (?, ?, ?, 0)`).run(
+        'broadcast_send', 'error',
+        JSON.stringify({ broadcast_id: broadcast.id, error: 'no_wecom_userid_staff', total_staff: staff.length }),
+        null
+      )
+      log('wecom', 'error', `群发 #${broadcast.id} 无法下发：${staff.length} 名员工均未绑定 wecom_userid`)
+      throw new Error('没有任何员工绑定企微账号，请先同步企微通讯录')
+    }
     const msgData = {
       msgtype: 'text',
       text: { content },
@@ -200,8 +241,7 @@ export async function sendBroadcast(broadcast, onProgress) {
     log('wecom', 'info', `群发模板创建成功 msgid=${templateId}`)
     let okCount = 0
     let failCount = 0
-    for (const s of staff) {
-      if (!s.wecom_userid) continue
+    for (const s of eligibleStaff) {
       try {
         const r = await callWecomApi('cgi-bin/externalcontact/group_wchat', {
           msgid: templateId,

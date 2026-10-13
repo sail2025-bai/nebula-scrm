@@ -7,7 +7,7 @@ import Modal from '../components/ui/Modal'
 import { formatDateTime } from '../utils'
 
 interface SeasViewProps {
-  mode: BizMode
+
   dataVersion: number
   onChanged?: () => void
 }
@@ -21,7 +21,7 @@ const STATUS_META: Record<SeasLeadStatus, { label: string; badge: string }> = {
   converted: { label: '已转正', badge: 'bg-emerald-100 text-emerald-800' }
 }
 
-export default function SeasView({ mode, dataVersion, onChanged }: SeasViewProps) {
+export default function SeasView({dataVersion, onChanged }: SeasViewProps) {
   const { showToast } = useToast()
   const [leads, setLeads] = useState<SeasLead[]>([])
   const [staff, setStaff] = useState<Staff[]>([])
@@ -34,8 +34,8 @@ export default function SeasView({ mode, dataVersion, onChanged }: SeasViewProps
   const [busyId, setBusyId] = useState<number | null>(null)
 
   const loadLeads = useCallback(() => {
-    api.getSeasLeads(mode).then(setLeads).catch(() => {})
-  }, [mode])
+    api.getSeasLeads().then(setLeads).catch(() => {})
+  }, [])
 
   useEffect(() => {
     loadLeads()
@@ -50,7 +50,7 @@ export default function SeasView({ mode, dataVersion, onChanged }: SeasViewProps
     setAssignStaffId('')
     setImportOpen(false)
     setImportText('')
-  }, [mode])
+  }, [])
 
   const pendingCount = leads.filter(l => l.status === 'pending').length
   const claimedCount = leads.filter(l => l.status === 'claimed').length
@@ -104,8 +104,8 @@ export default function SeasView({ mode, dataVersion, onChanged }: SeasViewProps
       .finally(() => setBusyId(null))
   }
 
-  const handleDelete = (lead: SeasLead) => {
-    if (!window.confirm(`确定删除线索「${lead.name}」？删除后不可恢复`)) return
+  const handleDelete = async (lead: SeasLead) => {
+    if (!(await window.confirm(`确定删除线索「${lead.name}」？删除后不可恢复`))) return
     setBusyId(lead.id)
     api
       .deleteSeasLead(lead.id)
@@ -128,7 +128,7 @@ export default function SeasView({ mode, dataVersion, onChanged }: SeasViewProps
     }
     setImporting(true)
     api
-      .importSeasLeads({ lines, mode })
+      .importSeasLeads({ lines})
       .then(res => {
         setImportOpen(false)
         showToast(`成功导入 ${res.imported} 条${res.failed ? `，${res.failed} 条格式有误被跳过` : ''}`, 'success')
@@ -178,9 +178,7 @@ export default function SeasView({ mode, dataVersion, onChanged }: SeasViewProps
           <div className="min-w-0">
             <h4 className="font-bold text-slate-900 text-sm">线索公海池</h4>
             <p className="text-xs text-slate-500 mt-0.5">
-              {mode === 'service'
-                ? '未分配的企业线索，领取或分配给顾问跟进后可转入客户库'
-                : '未承接的消费者线索，认领后转入客户库统一运营'}
+              未分配的客户线索，领取或分配给顾问跟进后可转入客户库
             </p>
           </div>
         </div>
@@ -219,7 +217,7 @@ export default function SeasView({ mode, dataVersion, onChanged }: SeasViewProps
                       <td className="p-3.5 pl-4">
                         <div className="font-semibold text-slate-800">{l.name}</div>
                         <div className="text-[10px] text-slate-400">{l.phone || l.wechat_nick || '暂无联系方式'}</div>
-                        {mode === 'service' && l.company && (
+                        {l.company && (
                           <div className="text-[10px] text-slate-400 mt-0.5">{l.company}</div>
                         )}
                       </td>
@@ -289,7 +287,7 @@ export default function SeasView({ mode, dataVersion, onChanged }: SeasViewProps
         open={importOpen}
         onClose={() => setImportOpen(false)}
         title="批量导入线索"
-        subtitle={`每行一条线索，将导入至${mode === 'service' ? 'B端' : 'C端'}公海池`}
+        subtitle="每行一条线索，将导入至公海池"
         footer={
           <>
             <button

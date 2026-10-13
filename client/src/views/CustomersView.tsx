@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import type { BizMode, Customer, DashboardStats, Staff, Stage, Tag, CouponIssue } from '../types'
-import { INTENT_LEVEL_META, MODE_META, STAGE_META_BY_MODE } from '../types'
+import { INTENT_LEVEL_META, MODE_META, STAGE_META } from '../types'
 import { formatMoney, formatRelativeTime } from '../utils'
 import Avatar from '../components/ui/Avatar'
 import Empty from '../components/ui/Empty'
@@ -29,10 +29,10 @@ interface CustomersViewProps {
   searchQuery: string
   onOpenCustomer: (id: number) => void
   dataVersion: number
-  mode: BizMode
+
 }
 
-export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion, mode }: CustomersViewProps) {
+export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion}: CustomersViewProps) {
   const { showToast } = useToast()
   const [stage, setStage] = useState('')
   const [channel, setChannel] = useState('')
@@ -71,7 +71,6 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
         staff_id: staffId,
         tag,
         search: localSearch,
-        mode,
         page,
         pageSize: PAGE_SIZE
       })
@@ -82,11 +81,11 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
     } finally {
       setLoading(false)
     }
-  }, [stage, channel, staffId, tag, localSearch, page, mode, showToast])
+  }, [stage, channel, staffId, tag, localSearch, page, showToast])
 
   const loadStats = useCallback(() => {
-    api.getDashboardStats(mode).then((stats) => setStageStats(stats.stageStats)).catch(() => {})
-  }, [mode])
+    api.getDashboardStats().then((stats) => setStageStats(stats.stageStats)).catch(() => {})
+  }, [])
 
   useEffect(() => {
     fetchCustomers()
@@ -97,10 +96,10 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
   }, [loadStats, dataVersion])
 
   useEffect(() => {
-    api.getChannels(mode).then(setChannels).catch(() => {})
+    api.getChannels().then(setChannels).catch(() => {})
     api.getStaff().then(setStaffList).catch(() => {})
-    api.getTags(mode).then(setTags).catch(() => {})
-  }, [mode])
+    api.getTags().then(setTags).catch(() => {})
+  }, [])
 
   useEffect(() => {
     setLocalSearch(searchQuery)
@@ -110,14 +109,14 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
   const refreshAll = useCallback(() => {
     fetchCustomers()
     loadStats()
-    api.getTags(mode).then(setTags).catch(() => {})
-  }, [fetchCustomers, loadStats, mode])
+    api.getTags().then(setTags).catch(() => {})
+  }, [fetchCustomers, loadStats])
 
   const stageFilters: { value: string; label: string }[] = [
     { value: '', label: '全部' },
     ...(['new', 'mature', 'loyal', 'churn'] as Stage[]).map((s) => ({
       value: s,
-      label: STAGE_META_BY_MODE[mode][s].label
+      label: STAGE_META[s].label
     }))
   ]
 
@@ -170,7 +169,7 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
       setSelected(new Set())
       await fetchCustomers()
       loadStats()
-      api.getTags(mode).then(setTags).catch(() => {})
+      api.getTags().then(setTags).catch(() => {})
     } catch (e) {
       showToast((e as Error).message, 'warning')
     } finally {
@@ -179,7 +178,7 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
   }
 
   const handleDelete = async (customer: Customer) => {
-    if (!window.confirm(`确定删除客户「${customer.name}」的档案吗？该操作不可恢复`)) return
+    if (!(await window.confirm(`确定删除客户「${customer.name}」的档案吗？该操作不可恢复`))) return
     try {
       await api.deleteCustomer(customer.id)
       showToast('客户档案已删除')
@@ -204,7 +203,9 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
 
   async function handleRedeemWallet(issue: CouponIssue) {
     if (!purchaseOpen) {
-      const amt = prompt('输入核销的订单金额（元）', '100')
+      const raw = await window.prompt('输入核销的订单金额（元）', '100')
+      if (raw == null) return
+      const amt = raw
       if (!amt) return
       try {
         const r = await api.redeemCoupon({ issue_id: issue.id, order_no: `MANUAL_${Date.now()}`, order_amount: Number(amt) })
@@ -259,6 +260,87 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
             ))}
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                if (selected.size === 0) return
+                const staffSelect = document.createElement('select')
+                staffSelect.innerHTML = staffList.map(s => `<option value="${s.id}">${s.name} (${s.role})</option>`).join('')
+                const container = document.createElement('div')
+                container.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;z-index:9999'
+                container.innerHTML = `
+                  <div style="background:#fff;border-radius:12px;padding:24px;min-width:320px;box-shadow:0 10px 40px rgba(0,0,0,.2)">
+                    <div style="font-weight:600;margin-bottom:16px">批量分配顾问（${selected.size} 位客户）</div>
+                    ${staffSelect.outerHTML.replace('<select', '<select style="width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:16px"')}
+                    <div style="display:flex;gap:8px;justify-content:flex-end">
+                      <button id="cancel" style="padding:8px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#fff">取消</button>
+                      <button id="ok" style="padding:8px 16px;border:none;border-radius:8px;background:#6366f1;color:#fff">确认分配</button>
+                    </div>
+                  </div>`
+                document.body.appendChild(container)
+                ;(container.querySelector('#cancel') as HTMLButtonElement).onclick = () => document.body.removeChild(container)
+                ;(container.querySelector('#ok') as HTMLButtonElement).onclick = async () => {
+                  const sid = Number((container.querySelector('select') as HTMLSelectElement).value)
+                  document.body.removeChild(container)
+                  try {
+                    const r = await api.batchAssignStaff(Array.from(selected), sid)
+                    showToast(`已分配 ${r.affected} 位客户`)
+                    setSelected(new Set())
+                    await fetchCustomers()
+                  } catch (e) { showToast((e as Error).message, 'warning') }
+                }
+              }}
+              disabled={selected.size === 0}
+              className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium flex items-center gap-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <i className="fa-solid fa-user-tie text-emerald-500" />
+              <span>批量分配顾问</span>
+            </button>
+            <button
+              onClick={async () => {
+                if (selected.size === 0) return
+                const stages = [['new','新客'],['contacted','已联系'],['intended','有意向'],['trying','尝试中'],['paid','已付费'],['retained','已留存'],['lost','已流失']]
+                const s = document.createElement('select')
+                s.innerHTML = stages.map(([v,l]) => `<option value="${v}">${l}</option>`).join('')
+                const c = document.createElement('div')
+                c.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;z-index:9999'
+                c.innerHTML = `<div style="background:#fff;border-radius:12px;padding:24px;min-width:280px;box-shadow:0 10px 40px rgba(0,0,0,.2)"><div style="font-weight:600;margin-bottom:16px">批量改阶段（${selected.size} 位）</div>${s.outerHTML.replace('<select', '<select style="width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:16px"')}<div style="display:flex;gap:8px;justify-content:flex-end"><button id="cc" style="padding:8px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#fff">取消</button><button id="oo" style="padding:8px 16px;border:none;border-radius:8px;background:#6366f1;color:#fff">确认</button></div></div>`
+                document.body.appendChild(c)
+                ;(c.querySelector('#cc') as HTMLButtonElement).onclick = () => document.body.removeChild(c)
+                ;(c.querySelector('#oo') as HTMLButtonElement).onclick = async () => {
+                  const stage = (c.querySelector('select') as HTMLSelectElement).value
+                  document.body.removeChild(c)
+                  try {
+                    const r = await api.batchStage(Array.from(selected), stage)
+                    showToast(`已更新 ${r.affected} 位客户阶段`)
+                    setSelected(new Set())
+                    await fetchCustomers()
+                  } catch (e) { showToast((e as Error).message, 'warning') }
+                }
+              }}
+              disabled={selected.size === 0}
+              className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-medium flex items-center gap-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <i className="fa-solid fa-layer-group text-blue-500" />
+              <span>批量改阶段</span>
+            </button>
+            <button
+              onClick={async () => {
+                if (selected.size === 0) return
+                if (!confirm(`确定删除选中的 ${selected.size} 位客户？此操作不可恢复。`)) return
+                try {
+                  const r = await api.batchDelete(Array.from(selected))
+                  showToast(`已删除 ${r.affected} 位客户`)
+                  setSelected(new Set())
+                  await fetchCustomers()
+                  loadStats()
+                } catch (e) { showToast((e as Error).message, 'warning') }
+              }}
+              disabled={selected.size === 0}
+              className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-medium flex items-center gap-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <i className="fa-solid fa-trash text-rose-500" />
+              <span>批量删除</span>
+            </button>
             <button
               onClick={() => setBatchOpen(true)}
               disabled={selected.size === 0}
@@ -370,7 +452,7 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
                 <th className="p-3.5">生命周期 / 价值等级</th>
                 <th className="p-3.5">画像标签 (Tags)</th>
                 <th className="p-3.5">引流渠道</th>
-                <th className="p-3.5">{MODE_META[mode].valueColTitle}</th>
+                <th className="p-3.5">{MODE_META.valueColTitle}</th>
                 <th className="p-3.5">最近私域互动</th>
                 <th className="p-3.5 pr-4 text-center">操作</th>
               </tr>
@@ -398,7 +480,7 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
                         <div>
                           <div className="font-semibold text-slate-900">{c.name}</div>
                           <div className="text-[11px] text-slate-400">{c.wechat_nick}</div>
-                          {mode === 'service' && c.company && (
+                          {c.company && (
                             <div className="text-[10px] text-slate-400 truncate">{c.company}</div>
                           )}
                           <div className="text-[11px] text-slate-400">
@@ -409,11 +491,11 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
                     </td>
                     <td className="p-3.5">
                       <span
-                        className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${STAGE_META_BY_MODE[mode][c.stage].badge}`}
+                        className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${STAGE_META[c.stage].badge}`}
                       >
-                        {STAGE_META_BY_MODE[mode][c.stage].label}
+                        {STAGE_META[c.stage].label}
                       </span>
-                      {mode === 'service' && c.intent_level && INTENT_LEVEL_META[c.intent_level] && (
+                      {c.intent_level && INTENT_LEVEL_META[c.intent_level] && (
                         <span
                           className={`block mt-1 w-fit px-1.5 py-0.5 rounded text-[10px] font-medium ${INTENT_LEVEL_META[c.intent_level].badge}`}
                         >
@@ -541,11 +623,10 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
       <CustomerFormModal
         open={formOpen}
         customer={editing}
-        mode={mode}
         onClose={() => setFormOpen(false)}
         onSaved={refreshAll}
       />
-      <TagManageModal open={tagManageOpen} mode={mode} onClose={() => setTagManageOpen(false)} onChanged={refreshAll} />
+      <TagManageModal open={tagManageOpen} onClose={() => setTagManageOpen(false)} onChanged={refreshAll} />
 
       <Modal
         open={batchOpen}
@@ -642,7 +723,7 @@ export default function CustomersView({ searchQuery, onOpenCustomer, dataVersion
           <div className="bg-slate-50 rounded-lg p-3 text-xs">
             <div className="flex justify-between"><span className="text-slate-500">当前订单数</span><span className="font-semibold">{purchaseOpen?.orders || 0}</span></div>
             <div className="flex justify-between mt-1"><span className="text-slate-500">累计消费</span><span className="font-semibold">￥{(purchaseOpen?.spend || 0).toFixed(0)}</span></div>
-            <div className="flex justify-between mt-1"><span className="text-slate-500">当前阶段</span><span className="font-semibold">{STAGE_META_BY_MODE[mode]?.[purchaseOpen?.stage as Stage]?.label || purchaseOpen?.stage}</span></div>
+            <div className="flex justify-between mt-1"><span className="text-slate-500">当前阶段</span><span className="font-semibold">{STAGE_META?.[purchaseOpen?.stage as Stage]?.label || purchaseOpen?.stage}</span></div>
           </div>
           <div>
             <label className="block text-xs text-slate-500 mb-1">订单金额（元）</label>

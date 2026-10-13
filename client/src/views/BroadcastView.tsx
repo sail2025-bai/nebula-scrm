@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
-import { MODE_META, type BizMode, type Broadcast, type Segment, type Staff } from '../types'
+import { MODE_META, type Broadcast, type Segment, type Staff } from '../types'
 import { useToast } from '../components/ui/Toast'
 import Avatar from '../components/ui/Avatar'
 import Empty from '../components/ui/Empty'
@@ -8,7 +8,7 @@ import Modal from '../components/ui/Modal'
 import { formatRelativeTime } from '../utils'
 
 interface BroadcastViewProps {
-  mode: BizMode
+
   openSignal: number
   dataVersion: number
 }
@@ -19,7 +19,7 @@ const DEFAULT_MESSAGE =
 const inputCls =
   'w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-emerald-500 focus:outline-none'
 
-export default function BroadcastView({ mode, openSignal, dataVersion }: BroadcastViewProps) {
+export default function BroadcastView({openSignal, dataVersion }: BroadcastViewProps) {
   const { showToast } = useToast()
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([])
   const [segments, setSegments] = useState<Segment[]>([])
@@ -35,17 +35,17 @@ export default function BroadcastView({ mode, openSignal, dataVersion }: Broadca
   })
 
   const loadBroadcasts = useCallback(() => {
-    api.getBroadcasts(mode).then(setBroadcasts).catch(() => {})
-  }, [mode])
+    api.getBroadcasts().then(setBroadcasts).catch(() => {})
+  }, [])
 
   useEffect(() => {
     loadBroadcasts()
   }, [loadBroadcasts, dataVersion])
 
   useEffect(() => {
-    api.getSegments(mode).then(setSegments).catch(() => {})
+    api.getSegments().then(setSegments).catch(() => {})
     api.getStaff().then(setStaff).catch(() => {})
-  }, [mode])
+  }, [])
 
   useEffect(() => {
     if (openSignal > 0) setCreateOpen(true)
@@ -73,12 +73,10 @@ export default function BroadcastView({ mode, openSignal, dataVersion }: Broadca
         type: form.type,
         audience_desc: segment ? segment.name : '全部私域好友',
         message: form.message.trim(),
-        conditions: segment ? segment.conditions : undefined,
-        mode
-      })
+        conditions: segment ? segment.conditions : undefined})
       .then(() => {
         setCreateOpen(false)
-        showToast(`群发任务已创建并下发至${MODE_META[mode].staffWord}企微端`, 'success')
+        showToast(`群发任务已创建并下发至${MODE_META.staffWord}企微端`, 'success')
         loadBroadcasts()
       })
       .catch(e => showToast(e instanceof Error ? e.message : '创建失败', 'warning'))
@@ -125,7 +123,7 @@ export default function BroadcastView({ mode, openSignal, dataVersion }: Broadca
                   </div>
                   <div className="text-right shrink-0">
                     <div className="text-emerald-600 font-bold text-xs whitespace-nowrap">
-                      {b.type === '客户群发' ? `${MODE_META[mode].staffWord}已发送 ${b.sent_rate}%` : `执行率 ${b.sent_rate}%`}
+                      {b.type === '客户群发' ? `${MODE_META.staffWord}已发送 ${b.sent_rate}%` : `执行率 ${b.sent_rate}%`}
                     </div>
                     <div className="text-slate-400 text-[10px] mt-0.5">{formatRelativeTime(b.created_at)}</div>
                   </div>
@@ -168,7 +166,7 @@ export default function BroadcastView({ mode, openSignal, dataVersion }: Broadca
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         title="新建精准客户群发任务"
-        subtitle={`创建后将分发至相关${MODE_META[mode].staffWord}的企业微信端，${MODE_META[mode].staffWord}一键确认即刻推送`}
+        subtitle={`创建后将分发至相关${MODE_META.staffWord}的企业微信端，${MODE_META.staffWord}一键确认即刻推送`}
         maxWidth="max-w-2xl"
         footer={
           <>
@@ -228,9 +226,9 @@ export default function BroadcastView({ mode, openSignal, dataVersion }: Broadca
           </div>
         </div>
         <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1">执行{MODE_META[mode].staffWord}人员</label>
+          <label className="block text-xs font-semibold text-slate-700 mb-1">执行{MODE_META.staffWord}人员</label>
           <select value={form.staff} onChange={e => setForm(f => ({ ...f, staff: e.target.value }))} className={inputCls}>
-            <option value="all">对应客户专属跟进{MODE_META[mode].staffWord} (全员)</option>
+            <option value="all">对应客户专属跟进{MODE_META.staffWord} (全员)</option>
             {staff.map(s => (
               <option key={s.id} value={String(s.id)}>
                 {s.name} ({s.role})
@@ -255,7 +253,7 @@ export default function BroadcastView({ mode, openSignal, dataVersion }: Broadca
           <div className="bg-slate-100 p-4 rounded-xl flex items-start gap-3">
             <Avatar name="林晨" size="md" />
             <div className="max-w-md min-w-0">
-              <div className="text-[10px] text-slate-400 mb-1">林晨 (美诺美妆资深{MODE_META[mode].staffWord})</div>
+              <div className="text-[10px] text-slate-400 mb-1">林晨 (美诺美妆资深{MODE_META.staffWord})</div>
               <div className="bg-white p-3 rounded-2xl rounded-tl-none shadow-sm text-xs text-slate-800 leading-normal break-all">
                 {form.message || '（暂未填写文案）'}
               </div>

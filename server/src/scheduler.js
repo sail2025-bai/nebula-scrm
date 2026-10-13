@@ -1,4 +1,4 @@
-import { log, syncStaffWecom } from './wecom.js'
+import { log, syncStaffWecom, sendBroadcast } from './wecom.js'
 import { pollMsgAudit, zeroTodayMessages } from './wecom-msgaudit.js'
 import { db } from './db.js'
 import fs from 'node:fs'
@@ -154,17 +154,26 @@ export async function scanPendingBroadcasts() {
       const cfg = db.prepare('SELECT status FROM wecom_config WHERE id = 1').get()
       const simulated = !cfg || cfg.status !== 'connected'
       if (simulated) {
+        // 企微未连通 → 标记为模拟下发（优雅降级，状态保留便于后续人工介入）
         db.prepare('UPDATE broadcasts SET status=?, sent_at=CURRENT_TIMESTAMP, sent_rate=100.0 WHERE id=?').run('已下发(模拟)', b.id)
         db.prepare(`INSERT INTO wecom_events (event_type, change_type, payload, handled) VALUES ('broadcast_send','scheduled_simulated',?,1)`).run(
-          JSON.stringify({ broadcast_id: b.id, title: b.title })
+          JSON.stringify({ broadcast_id: b.id, title: b.title, reason: '企微未连通，自动标记为模拟' })
         )
-        log('scheduler', 'info', `群发 #${b.id} 模拟自动下发`)
+        log('scheduler', 'info', `群发 #${b.id} 模拟自动下发 (wecom not connected)`)
       } else {
-        log('scheduler', 'info', `群发 #${b.id} connected 模式自动下发（跳过，需前端手动调用 /send 确认）`)
+        // ✅ 企微已连通 → 真实调企微客户群发 API
+        log('scheduler', 'info', `群发 #${b.id} connected 模式 → 调用企微客户群发`)
+        try {
+          const r = await sendBroadcast(b)
+          log('scheduler', 'info', `群发 #${b.id} 下发完成 ok=${r.ok || r.simulated ? (r.simulated ? 'simulated' : 'all') : r.ok} msgid=${r.msgid || '-'} simulated=${r.simulated || false}`)
+        } catch (e) {
+          // sendBroadcast 内部已更新状态为"下发失败"，这里只记日志
+          log('scheduler', 'error', `群发 #${b.id} 下发失败：${e.message}`)
+        }
       }
       sent++
     } catch (e) {
-      log('scheduler', 'error', `群发 #${b.id} 自动下发失败：${e.message}`)
+      log('scheduler', 'error', `群发 #${b.id} 自动下发异常：${e.message}`)
     }
   }
   return { scanned: pending.length, sent }

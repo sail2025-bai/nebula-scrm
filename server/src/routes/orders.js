@@ -31,8 +31,19 @@ const STATUS_META = {
 
 function enrichOrder(row) {
   if (!row) return null
+  // 关联 order_items + 地址快照（如果有 address_id 就查最新，没有就用 address_snapshot JSON）
+  let items = []
+  try { items = db.prepare('SELECT * FROM order_items WHERE order_id = ? ORDER BY id ASC').all(row.id) } catch {}
+  let address = null
+  if (row.address_snapshot) {
+    try { address = JSON.parse(row.address_snapshot) } catch {}
+  } else if (row.address_id) {
+    try { address = db.prepare('SELECT * FROM addresses WHERE id = ?').get(row.address_id) } catch {}
+  }
   return {
     ...row,
+    items,
+    address,
     source_label: SOURCE_LABELS[row.source] || row.source,
     status_label: STATUS_META[row.status]?.label || row.status,
     status_color: STATUS_META[row.status]?.color || 'bg-slate-100 text-slate-500'

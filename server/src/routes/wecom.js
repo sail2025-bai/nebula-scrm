@@ -1,4 +1,5 @@
 import express from 'express'
+import { wrapAsync } from '../utils/wrap.js'
 import { db, now } from '../db.js'
 import { WXBizMsgCrypt, getAccessToken, callWecomApi, upsertGroupFromWecom, syncGroupMemberJoin, syncGroupMemberLeave, dismissGroup, getStaffByCode } from '../wecom.js'
 import { ipWhitelist } from '../middleware/ipWhitelist.js'
@@ -90,7 +91,7 @@ router.put('/config', (req, res) => {
   res.json(getConfig())
 })
 
-router.post('/test', async (req, res) => {
+router.post('/test', wrapAsync(async (req, res) => {
   const b = req.body || {}
   const cfg = getConfig()
   const pick = (v, fallback) => (v !== undefined && v !== null && String(v).trim() !== '') ? String(v).trim() : fallback
@@ -109,48 +110,16 @@ router.post('/test', async (req, res) => {
   }
   db.prepare("UPDATE wecom_config SET status = 'simulated' WHERE id = 1").run()
   res.json({ ok: true, status: 'simulated', message: '未配置真实凭据，已进入模拟模式：可使用模拟事件注入体验完整闭环' })
-})
+}))
 
-router.post('/sync-staff', async (req, res) => {
+router.post('/sync-staff', wrapAsync(async (req, res) => {
+  // ✅ 直接复用 wecom.js 里的完整同步实现（带 wecom_userid / position / department / avatar）
+  // 不再用本文件里残缺的 demoStaff 逻辑
+  const { syncStaffWecom } = await import('../wecom.js')
+  const synced = await syncStaffWecom()
   const cfg = getConfig()
-  if (cfg.status === 'connected') {
-    try {
-      const data = await callWecomApi('user/simplelist', { department_id: 1, fetch_child: 1 })
-      const list = data && Array.isArray(data.userlist) ? data.userlist : []
-      const findStaff = db.prepare('SELECT id FROM staff WHERE name = ?')
-      const updateStaff = db.prepare("UPDATE staff SET role = '企微同步' WHERE id = ?")
-      const insertStaff = db.prepare("INSERT INTO staff (name, role, created_at) VALUES (?, '企微同步', ?)")
-      let synced = 0
-      const tx = db.transaction(() => {
-        for (const u of list) {
-          if (!u || !u.name) continue
-          const row = findStaff.get(u.name)
-          if (row) updateStaff.run(row.id)
-          else insertStaff.run(u.name, now())
-          synced++
-        }
-      })
-      tx()
-      db.prepare('UPDATE wecom_config SET last_sync_at = ? WHERE id = 1').run(now())
-      return res.json({ synced, mode: cfg.status })
-    } catch (e) {
-      return res.status(400).json({ error: '同步企微通讯录失败：' + e.message })
-    }
-  }
-  const demoStaff = ['唐薇', '程皓', '纪云']
-  const findStaff = db.prepare('SELECT id FROM staff WHERE name = ?')
-  const insertStaff = db.prepare('INSERT INTO staff (name, role, created_at) VALUES (?, ?, ?)')
-  let synced = 0
-  const tx = db.transaction(() => {
-    for (const name of demoStaff) {
-      if (!findStaff.get(name)) insertStaff.run(name, '演示顾问(模拟)', now())
-      synced++
-    }
-  })
-  tx()
-  db.prepare('UPDATE wecom_config SET last_sync_at = ? WHERE id = 1').run(now())
   res.json({ synced, mode: cfg.status })
-})
+}))
 
 router.get('/events', (req, res) => {
   const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50))
@@ -214,7 +183,7 @@ router.get('/callback', ipWhitelist('wecom_webhook_ips'), (req, res) => {
   }
 })
 
-router.post('/callback', ipWhitelist('wecom_webhook_ips'), express.text({ type: () => true }), async (req, res) => {
+router.post('/callback', ipWhitelist('wecom_webhook_ips'), express.text({ type: () => true }), wrapAsync(async (req, res) => {
   try {
     const cfg = getConfig()
     if (!cfg.callback_token || !cfg.encoding_aes_key) throw new Error('未配置 Token 与 EncodingAESKey')
@@ -243,7 +212,7 @@ router.post('/callback', ipWhitelist('wecom_webhook_ips'), express.text({ type: 
   }
   res.set('Content-Type', 'text/plain')
   res.send('success')
-})
+}))
 
 async function handleCallbackEvent(event, changeType, externalUserid, userid, chatId, chatName, memberList, joinExternalUid, joinName) {
   if (changeType === 'add_external_contact') {
@@ -305,7 +274,7 @@ async function handleCallbackEvent(event, changeType, externalUserid, userid, ch
 
 export default router
 
-router.post('/simulate-group', async (req, res) => {
+router.post('/simulate-group', wrapAsync(async (req, res) => {
   const b = req.body || {}
   const { event, chatId, chatName, externalUserid, memberList } = b
   if (!event) return res.status(400).json({ error: 'event 必填' })
@@ -347,5 +316,5 @@ router.post('/simulate-group', async (req, res) => {
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message })
   }
-})
+}))
 

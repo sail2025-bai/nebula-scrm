@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ConditionField, ConditionOperator, SopConditions } from '../../types'
+import type { ConditionField, ConditionOperator, SopConditions, SopConditionLeaf } from '../../types'
 
 interface Props {
   value: SopConditions | null
@@ -177,8 +177,8 @@ function RuleRow({
     )
   }
 
-  // 叶子规则
-  const leaf = rule as SopConditions['rules'][number] & { field: string; op: string }
+  // 叶子规则（isGroup 为 false 时 rule 必是 SopConditionLeaf）
+  const leaf = rule as SopConditionLeaf
   const field = fields.find(f => f.value === leaf.field) || fields[0]
   const availOps = (field && operators[field.type]) || []
 
@@ -277,7 +277,7 @@ function ValueInput({ field, op, value, onChange }: {
     return (
       <input
         type="number"
-        value={value ?? ''}
+        value={Array.isArray(value) ? '' : (value ?? '')}
         onChange={e => onChange(e.target.value === '' ? 0 : Number(e.target.value))}
         className={inputCls}
         placeholder="数值"

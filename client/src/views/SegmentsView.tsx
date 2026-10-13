@@ -2,8 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import {
   MODE_META,
-  STAGE_META_BY_MODE,
-  type BizMode,
+  STAGE_META,
   type Customer,
   type Segment,
   type SegmentConditions,
@@ -17,7 +16,7 @@ import Modal from '../components/ui/Modal'
 import { formatMoney, formatRelativeTime } from '../utils'
 
 interface SegmentsViewProps {
-  mode: BizMode
+
   onOpenCustomer: (id: number) => void
   dataVersion: number
 }
@@ -45,12 +44,12 @@ const EMPTY_FORM: SegmentForm = {
 const inputCls =
   'w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-emerald-500 focus:outline-none'
 
-function conditionChips(c: SegmentConditions, mode: BizMode): string[] {
+function conditionChips(c: SegmentConditions): string[] {
   const chips: string[] = []
-  if (c.stage) chips.push(STAGE_META_BY_MODE[mode][c.stage].label)
+  if (c.stage) chips.push(STAGE_META[c.stage].label)
   ;(c.tags ?? []).forEach(t => chips.push(t))
   ;(c.channels ?? []).forEach(ch => chips.push(ch))
-  if (c.minSpend) chips.push(`${MODE_META[mode].spendLabel}≥￥${c.minSpend}`)
+  if (c.minSpend) chips.push(`${MODE_META.spendLabel}≥￥${c.minSpend}`)
   if (c.maxDaysInactive) chips.push(`${c.maxDaysInactive}天未互动`)
   return chips
 }
@@ -59,7 +58,7 @@ function toggleItem(arr: string[], item: string): string[] {
   return arr.includes(item) ? arr.filter(x => x !== item) : [...arr, item]
 }
 
-export default function SegmentsView({ mode, onOpenCustomer, dataVersion }: SegmentsViewProps) {
+export default function SegmentsView({onOpenCustomer, dataVersion }: SegmentsViewProps) {
   const { showToast } = useToast()
   const [segments, setSegments] = useState<Segment[]>([])
   const [tags, setTags] = useState<Tag[]>([])
@@ -74,30 +73,30 @@ export default function SegmentsView({ mode, onOpenCustomer, dataVersion }: Segm
   const [membersLoading, setMembersLoading] = useState(false)
 
   const loadSegments = useCallback(() => {
-    api.getSegments(mode).then(setSegments).catch(() => {})
-  }, [mode])
+    api.getSegments().then(setSegments).catch(() => {})
+  }, [])
 
   useEffect(() => {
     loadSegments()
   }, [loadSegments, dataVersion])
 
   useEffect(() => {
-    api.getTags(mode).then(setTags).catch(() => {})
-    api.getChannels(mode).then(setChannels).catch(() => {})
-  }, [mode])
+    api.getTags().then(setTags).catch(() => {})
+    api.getChannels().then(setChannels).catch(() => {})
+  }, [])
 
   useEffect(() => {
     setForm(EMPTY_FORM)
     setEditing(null)
     setFormOpen(false)
     setMembersOf(null)
-  }, [mode])
+  }, [])
 
   useEffect(() => {
     if (!membersOf) return
     setMembersLoading(true)
     api
-      .getCustomers({ segment: String(membersOf.id), mode, pageSize: 8 })
+      .getCustomers({ segment: String(membersOf.id), pageSize: 8 })
       .then(res => {
         setMembers(res.items)
         setMembersTotal(res.total)
@@ -142,7 +141,7 @@ export default function SegmentsView({ mode, onOpenCustomer, dataVersion }: Segm
     setSaving(true)
     const request = editing
       ? api.updateSegment(editing.id, form.name.trim(), form.description.trim(), conditions)
-      : api.createSegment(form.name.trim(), form.description.trim(), conditions, mode)
+      : api.createSegment(form.name.trim(), form.description.trim(), conditions)
     request
       .then(() => {
         setFormOpen(false)
@@ -153,8 +152,8 @@ export default function SegmentsView({ mode, onOpenCustomer, dataVersion }: Segm
       .finally(() => setSaving(false))
   }
 
-  const handleDelete = (segment: Segment) => {
-    if (!window.confirm(`确定删除分群「${segment.name}」？删除后不可恢复`)) return
+  const handleDelete = async (segment: Segment) => {
+    if (!(await window.confirm(`确定删除分群「${segment.name}」？删除后不可恢复`))) return
     api
       .deleteSegment(segment.id)
       .then(() => {
@@ -199,7 +198,7 @@ export default function SegmentsView({ mode, onOpenCustomer, dataVersion }: Segm
                 <span className="text-xs text-slate-400">位成员</span>
               </div>
               <div className="flex flex-wrap gap-1.5 mt-3">
-                {conditionChips(s.conditions, mode).map((chip, i) => (
+                {conditionChips(s.conditions).map((chip, i) => (
                   <span
                     key={`${chip}-${i}`}
                     className="text-[10px] px-2 py-0.5 rounded font-medium bg-slate-100 text-slate-600"
@@ -297,9 +296,9 @@ export default function SegmentsView({ mode, onOpenCustomer, dataVersion }: Segm
               className={inputCls}
             >
               <option value="">全部阶段</option>
-              {(Object.keys(STAGE_META_BY_MODE[mode]) as Stage[]).map(st => (
+              {(Object.keys(STAGE_META) as Stage[]).map(st => (
                 <option key={st} value={st}>
-                  {STAGE_META_BY_MODE[mode][st].label}
+                  {STAGE_META[st].label}
                 </option>
               ))}
             </select>
@@ -351,7 +350,7 @@ export default function SegmentsView({ mode, onOpenCustomer, dataVersion }: Segm
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                {MODE_META[mode].spendLabel} ≥
+                {MODE_META.spendLabel} ≥
               </label>
               <input
                 type="number"
@@ -405,16 +404,16 @@ export default function SegmentsView({ mode, onOpenCustomer, dataVersion }: Segm
                     </div>
                     <span
                       className={`inline-block text-[10px] px-1.5 py-0.5 rounded mt-0.5 ${
-                        STAGE_META_BY_MODE[mode][m.stage].badge
+                        STAGE_META[m.stage].badge
                       }`}
                     >
-                      {STAGE_META_BY_MODE[mode][m.stage].label}
+                      {STAGE_META[m.stage].label}
                     </span>
                   </div>
                 </div>
                 <div className="text-right shrink-0 ml-3">
                   <div className="text-xs font-bold text-slate-700">{formatMoney(m.spend)}</div>
-                  <div className="text-[10px] text-slate-400">{MODE_META[mode].spendLabel}</div>
+                  <div className="text-[10px] text-slate-400">{MODE_META.spendLabel}</div>
                 </div>
               </div>
             ))}

@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, lazy } from 'react'
 import PublicCouponView from './views/public/PublicCouponView'
 import PublicSeckillView from './views/public/PublicSeckillView'
 import PublicMyCouponsView from './views/public/PublicMyCouponsView'
+import PublicMyOrdersView from './views/public/PublicMyOrdersView'
 import PublicShopView from './views/public/PublicShopView'
+import ProductDetailView from './views/public/ProductDetailView'
 
 // 公开页面路由：/p/[page]?qr=xxx&code=xxx  （无需运营登录）
 // 客户扫活码后跳转到这里，通过 URL 参数关联活码/客户
@@ -10,11 +12,12 @@ function parseRoute() {
   const path = window.location.pathname.replace(/^\/p\//, '').split('/')[0] || 'coupon'
   const params = new URLSearchParams(window.location.search)
   return {
-    page: path as 'coupon' | 'seckill' | 'my-coupons' | 'shop',
+    page: path as 'coupon' | 'seckill' | 'my-coupons' | 'my-orders' | 'shop' | 'product',
     qr: params.get('qr'),
     code: params.get('code'),
     issue: params.get('issue'),
-    coupon_code: params.get('coupon_code')
+    coupon_code: params.get('coupon_code'),
+    product_id: params.get('product_id')
   }
 }
 
@@ -38,15 +41,23 @@ export default function PublicApp() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-amber-50">
+    <div className="min-h-screen public-bg">
       {route.page === 'coupon' && <PublicCouponView qrCodeId={route.qr} navigate={navigate} />}
       {route.page === 'seckill' && <PublicSeckillView qrCodeId={route.qr} customerCode={route.code} navigate={navigate} />}
       {route.page === 'my-coupons' && <PublicMyCouponsView customerCode={route.code} navigate={navigate} />}
+      {route.page === 'my-orders' && <PublicMyOrdersView customerCode={route.code} navigate={navigate} />}
       {route.page === 'shop' && (
         <PublicShopView
           customerCode={route.code}
           preselectedIssueId={route.issue}
           preselectedCode={route.coupon_code}
+          navigate={navigate}
+        />
+      )}
+      {route.page === 'product' && (
+        <ProductDetailView
+          productId={route.product_id ? Number(route.product_id) : null}
+          customerCode={route.code}
           navigate={navigate}
         />
       )}

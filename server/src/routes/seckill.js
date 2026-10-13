@@ -63,11 +63,56 @@ router.post('/:id/grab', (req, res) => {
     if (nowStr < act.start_at) return { ok: false, reason: '尚未开始' }
     if (nowStr > act.end_at) return { ok: false, reason: '已结束' }
     db.prepare('UPDATE seckill_activities SET sold = sold + 1 WHERE id = ?').run(id)
+    db.prepare('INSERT OR IGNORE INTO seckill_grab_orders (activity_id, customer_id, price, grab_at, status) VALUES (?, ?, ?, ?, ?)').run(id, customerId, act.price, nowStr, 'pending')
     return { ok: true, price: act.price, customer_id: customerId, activity_id: id, title: act.title, grab_at: nowStr }
   })()
 
   if (!ok.ok) return res.status(409).json({ error: ok.reason })
   res.json(ok)
+})
+
+// 抢单订单列表（支持按活动/客户/状态过滤）
+router.get('/:id/orders', (req, res) => {
+  const id = Number(req.params.id)
+  const act = Number.isInteger(id) ? db.prepare('SELECT * FROM seckill_activities WHERE id = ?').get(id) : null
+  if (!act) return res.status(404).json({ error: '秒杀活动不存在' })
+  const status = req.query.status
+  let sql = `SELECT o.*, c.name AS customerName, c.phone, c.wechat_nick FROM seckill_grab_orders o
+    JOIN customers c ON c.id = o.customer_id
+    WHERE o.activity_id = ?`
+  const params = [id]
+  if (status) { sql += ' AND o.status = ?'; params.push(String(status)) }
+  sql += ' ORDER BY o.grab_at DESC LIMIT 500'
+  const orders = db.prepare(sql).all(...params)
+  const total = db.prepare('SELECT COUNT(*) as n FROM seckill_grab_orders WHERE activity_id = ?').get(id).n
+  res.json({ activity: act, orders, total })
+})
+
+// 抢单全量（不限活动，支持状态过滤 + 时间范围）
+router.get('/orders/all', (req, res) => {
+  const { status, customer_id } = req.query
+  let sql = `SELECT o.*, a.title AS activityTitle, a.price AS activityPrice, c.name AS customerName, c.phone FROM seckill_grab_orders o
+    JOIN seckill_activities a ON a.id = o.activity_id
+    JOIN customers c ON c.id = o.customer_id
+    WHERE 1=1`
+  const params = []
+  if (status) { sql += ' AND o.status = ?'; params.push(String(status)) }
+  if (customer_id) { sql += ' AND o.customer_id = ?'; params.push(Number(customer_id)) }
+  sql += ' ORDER BY o.grab_at DESC LIMIT 500'
+  res.json(db.prepare(sql).all(...params))
+})
+
+// 更新订单状态
+router.post('/orders/:id/status', (req, res) => {
+  const id = Number(req.params.id)
+  const b = req.body || {}
+  const status = String(b.status || 'pending')
+  if (!['pending', 'paid', 'refunded', 'cancelled'].includes(status)) {
+    return res.status(400).json({ error: '状态非法，支持 pending/paid/refunded/cancelled' })
+  }
+  const r = db.prepare('UPDATE seckill_grab_orders SET status = ? WHERE id = ?').run(status, id)
+  if (!r.changes) return res.status(404).json({ error: '订单不存在' })
+  res.json({ ok: true, id, status })
 })
 
 export default router

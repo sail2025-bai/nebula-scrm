@@ -14,12 +14,12 @@ const CATEGORY_CLS: Record<string, string> = {
 
 interface TagManageModalProps {
   open: boolean
-  mode: BizMode
+
   onClose: () => void
   onChanged: () => void
 }
 
-export default function TagManageModal({ open, mode, onClose, onChanged }: TagManageModalProps) {
+export default function TagManageModal({ open, onClose, onChanged }: TagManageModalProps) {
   const { showToast } = useToast()
   const [tags, setTags] = useState<Tag[]>([])
   const [categoryFilter, setCategoryFilter] = useState('')
@@ -31,11 +31,11 @@ export default function TagManageModal({ open, mode, onClose, onChanged }: TagMa
 
   const fetchTags = useCallback(async () => {
     try {
-      setTags(await api.getTags(mode))
+      setTags(await api.getTags())
     } catch (e) {
       showToast((e as Error).message, 'warning')
     }
-  }, [showToast, mode])
+  }, [showToast])
 
   useEffect(() => {
     if (open) fetchTags()
@@ -52,7 +52,7 @@ export default function TagManageModal({ open, mode, onClose, onChanged }: TagMa
       return
     }
     try {
-      await api.createTag(name, newCategory, mode)
+      await api.createTag(name, newCategory)
       showToast(`标签「${name}」创建成功`)
       setNewName('')
       await fetchTags()
@@ -92,7 +92,7 @@ export default function TagManageModal({ open, mode, onClose, onChanged }: TagMa
   }
 
   const handleDelete = async (tag: Tag) => {
-    if (!window.confirm(`确定删除标签「${tag.name}」吗？`)) return
+    if (!(await window.confirm(`确定删除标签「${tag.name}」吗？`))) return
     try {
       await api.deleteTag(tag.id)
       showToast(`标签「${tag.name}」已删除`)

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import { MODE_META, type BizMode, type MsgAuditStatus, type SimulateEventPayload, type Staff, type WecomConfig, type WecomEvent, type WecomStatus } from '../types'
+import { MODE_META, type MsgAuditStatus, type SimulateEventPayload, type Staff, type WecomConfig, type WecomEvent, type WecomStatus } from '../types'
 import { useToast } from '../components/ui/Toast'
 import Empty from '../components/ui/Empty'
 import { formatDateTime } from '../utils'
@@ -89,13 +89,13 @@ const EMPTY_CONFIG: ConfigForm = {
 interface SimForm {
   changeType: SimulateEventPayload['changeType']
   name: string
-  mode: BizMode
+
   staffId: string
   channel: string
   tags: string
 }
 
-const EMPTY_SIM: SimForm = { changeType: 'add', name: '', mode: 'retail', staffId: '', channel: '', tags: '' }
+const EMPTY_SIM: SimForm = { changeType: 'add', name: '', staffId: '', channel: '', tags: '' }
 
 export default function WecomView() {
   const { showToast } = useToast()
@@ -256,8 +256,7 @@ export default function WecomView() {
               .split(/[,，]/)
               .map(t => t.trim())
               .filter(Boolean)
-          : undefined,
-        mode: simForm.mode
+          : undefined
       })
       .then(res => {
         showToast(res.customerId ? `${res.message}，新客户已入库` : res.message, 'success')
@@ -279,17 +278,17 @@ export default function WecomView() {
       .finally(() => setExporting(false))
   }
 
-  const handleExportCsv = (m: BizMode) => {
+  const handleExportCsv = () => {
     setExporting(true)
     api
-      .exportCustomersCsv(m)
+      .exportCustomersCsv()
       .then(csv => {
         downloadText(
           csv,
-          `customers-${m === 'retail' ? 'retail' : 'biz'}-${dateStamp()}.csv`,
+          `customers-${dateStamp()}.csv`,
           'text/csv;charset=utf-8'
         )
-        showToast(`${m === 'retail' ? 'C端' : 'B端'}客户明细已导出`, 'success')
+        showToast('客户明细已导出', 'success')
       })
       .catch(e => showToast(e instanceof Error ? e.message : '导出失败', 'warning'))
       .finally(() => setExporting(false))
@@ -689,20 +688,6 @@ export default function WecomView() {
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">业务模式</label>
-            <select
-              value={simForm.mode}
-              onChange={e => setSimForm(f => ({ ...f, mode: e.target.value as BizMode }))}
-              className={inputCls}
-            >
-              {(Object.keys(MODE_META) as BizMode[]).map(m => (
-                <option key={m} value={m}>
-                  {MODE_META[m].shortLabel}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">负责员工</label>
             <select
               value={simForm.staffId}
@@ -842,20 +827,12 @@ export default function WecomView() {
             <span>导出全量 JSON 备份</span>
           </button>
           <button
-            onClick={() => handleExportCsv('retail')}
+            onClick={() => handleExportCsv()}
             disabled={exporting}
             className="px-3.5 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 rounded-lg text-xs font-medium flex items-center gap-1.5 transition"
           >
             <i className="fa-solid fa-file-csv text-xs" />
-            <span>导出C端客户CSV</span>
-          </button>
-          <button
-            onClick={() => handleExportCsv('service')}
-            disabled={exporting}
-            className="px-3.5 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 rounded-lg text-xs font-medium flex items-center gap-1.5 transition"
-          >
-            <i className="fa-solid fa-file-csv text-xs" />
-            <span>导出B端客户CSV</span>
+            <span>导出客户明细 CSV</span>
           </button>
         </div>
       </div>

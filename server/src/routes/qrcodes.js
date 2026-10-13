@@ -1,4 +1,5 @@
 import express from 'express'
+import { wrapAsync } from '../utils/wrap.js'
 import { db, now } from '../db.js'
 
 const router = express.Router()
@@ -58,21 +59,28 @@ function applyTags(customerId, names, mode) {
 }
 
 router.get('/', (req, res) => {
-  const mode = req.query.mode
-  const rows = mode === 'retail' || mode === 'service'
-    ? db.prepare('SELECT q.*, s.name AS staffName FROM qr_codes q LEFT JOIN staff s ON s.id = q.staff_id WHERE q.mode = ? ORDER BY q.id DESC').all(mode)
-    : db.prepare('SELECT q.*, s.name AS staffName FROM qr_codes q LEFT JOIN staff s ON s.id = q.staff_id ORDER BY q.id DESC').all()
+  const rows = db.prepare('SELECT q.*, s.name AS staffName FROM qr_codes q LEFT JOIN staff s ON s.id = q.staff_id ORDER BY q.id DESC').all()
   res.json(rows.map((r) => ({ ...r, auto_tags: parseTags(r.auto_tags) })))
+})
+
+/** 单个活码详情 */
+router.get('/:id', (req, res) => {
+  const id = Number(req.params.id)
+  const qr = Number.isInteger(id) ? db.prepare('SELECT * FROM qr_codes WHERE id = ?').get(id) : null
+  if (!qr) return res.status(404).json({ error: '活码不存在' })
+  res.json({ ...qr, auto_tags: parseTags(qr.auto_tags) })
 })
 
 router.post('/', (req, res) => {
   const b = req.body || {}
   const name = b.name !== undefined && b.name !== null ? String(b.name).trim() : ''
   if (!name) return res.status(400).json({ error: '活码名称不能为空' })
-  const mode = b.mode === 'service' ? 'service' : 'retail'
+  const mode = (b.mode === 'service' || b.mode === 'retail') ? b.mode : null
   const tags = Array.isArray(b.auto_tags) ? b.auto_tags.filter(Boolean) : []
+  const targetType = b.target_type === 'seckill' || b.target_type === 'coupon' ? b.target_type : null
+  const targetId = targetType && b.target_id ? Number(b.target_id) : null
   try {
-    const r = db.prepare('INSERT INTO qr_codes (name, channel, staff_id, auto_tags, scan_count, active, mode, created_at) VALUES (?, ?, ?, ?, 0, 1, ?, ?)').run(name, b.channel ?? null, b.staff_id ?? null, JSON.stringify(tags), mode, now())
+    const r = db.prepare('INSERT INTO qr_codes (name, channel, staff_id, auto_tags, scan_count, active, mode, cta_type, target_type, target_id, created_at) VALUES (?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?)').run(name, b.channel ?? null, b.staff_id ?? null, JSON.stringify(tags), mode, b.cta_type || 'hybrid', targetType, targetId, now())
     res.status(201).json(qrWithStaff(Number(r.lastInsertRowid)))
   } catch (e) {
     res.status(400).json({ error: '创建活码失败' })
@@ -116,6 +124,15 @@ router.put('/:id', (req, res) => {
   if (b.target_id !== undefined) {
     sets.push('target_id = ?')
     params.push(b.target_id ? Number(b.target_id) : null)
+  }
+  // CTA 模式切换：add_staff / hybrid / target_page
+  if (b.cta_type !== undefined) {
+    sets.push('cta_type = ?')
+    params.push(b.cta_type ? String(b.cta_type) : 'hybrid')
+    // 切换到 add_staff 时清掉旧 ticket，让下次生成新的
+    if (b.cta_type === 'add_staff') {
+      sets.push('qr_ticket = NULL')
+    }
   }
   if (sets.length) {
     params.push(id)
@@ -163,7 +180,7 @@ router.post('/:id/scan', (req, res) => {
 
 import { createQrTicket, wecomConfig } from '../wecom.js'
 
-router.get('/:id/qrcode_url', async (req, res) => {
+router.get('/:id/qrcode_url', wrapAsync(async (req, res) => {
   const id = Number(req.params.id)
   const q = db.prepare('SELECT * FROM qr_codes WHERE id = ?').get(id)
   if (!q) return res.status(404).json({ error: '活码不存在' })
@@ -178,6 +195,6 @@ router.get('/:id/qrcode_url', async (req, res) => {
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message })
   }
-})
+}))
 
 export default router

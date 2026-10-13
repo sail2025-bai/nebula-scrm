@@ -124,6 +124,53 @@ router.post('/batch-tags', (req, res) => {
     res.status(400).json({ error: '批量打标签失败' })
   }
 })
+// 批量分配顾问
+router.post('/batch-assign-staff', (req, res) => {
+  const b = req.body || {}
+  if (!Array.isArray(b.ids) || !b.ids.length || !b.staff_id) return res.status(400).json({ error: '参数不完整' })
+  const staffId = Number(b.staff_id)
+  const staff = db.prepare('SELECT id FROM staff WHERE id = ?').get(staffId)
+  if (!staff) return res.status(400).json({ error: '顾问不存在' })
+  const up = db.prepare('UPDATE customers SET staff_id = ? WHERE id = ?')
+  let affected = 0
+  const tx = db.transaction(() => {
+    for (const id of b.ids) affected += up.run(staffId, Number(id)).changes
+  })
+  tx()
+  res.json({ ok: true, affected, staff_id: staffId })
+})
+
+// 批量改阶段
+router.post('/batch-stage', (req, res) => {
+  const b = req.body || {}
+  if (!Array.isArray(b.ids) || !b.ids.length || !b.stage) return res.status(400).json({ error: '参数不完整' })
+  const stages = ['new', 'contacted', 'intended', 'trying', 'paid', 'retained', 'lost']
+  if (!stages.includes(b.stage)) return res.status(400).json({ error: '阶段非法' })
+  const up = db.prepare('UPDATE customers SET stage = ? WHERE id = ?')
+  let affected = 0
+  const tx = db.transaction(() => {
+    for (const id of b.ids) affected += up.run(b.stage, Number(id)).changes
+  })
+  tx()
+  res.json({ ok: true, affected, stage: b.stage })
+})
+
+// 批量删除
+router.post('/batch-delete', (req, res) => {
+  const b = req.body || {}
+  if (!Array.isArray(b.ids) || !b.ids.length) return res.status(400).json({ error: '参数不完整' })
+  const qDel = db.prepare('DELETE FROM customers WHERE id = ?')
+  const qDelTags = db.prepare('DELETE FROM customer_tags WHERE customer_id = ?')
+  let affected = 0
+  const tx = db.transaction(() => {
+    for (const id of b.ids) {
+      qDelTags.run(Number(id))
+      affected += qDel.run(Number(id)).changes
+    }
+  })
+  tx()
+  res.json({ ok: true, affected })
+})
 
 router.post('/', (req, res) => {
   const b = req.body || {}

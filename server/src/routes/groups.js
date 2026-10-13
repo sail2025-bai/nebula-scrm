@@ -6,17 +6,13 @@ const router = express.Router()
 const qAll = `SELECT g.*, s.name AS ownerName, s.role AS owner_role, g.wecom_chat_id AS wecomChatId, g.dismissed FROM wechat_groups g LEFT JOIN staff s ON s.id = g.owner_staff_id`
 
 router.get('/', (req, res) => {
-  const mode = req.query.mode
-  if (mode === 'retail' || mode === 'service') {
-    return res.json(db.prepare(`${qAll} WHERE g.mode = ? ORDER BY g.id DESC`).all(mode))
-  }
   res.json(db.prepare(`${qAll} ORDER BY g.id DESC`).all())
 })
 
 router.post('/', (req, res) => {
   const b = req.body || {}
   if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: '群名称不能为空' })
-  const mode = b.mode === 'service' ? 'service' : 'retail'
+  const mode = (b.mode === 'service' || b.mode === 'retail') ? b.mode : null
   const r = db.prepare('INSERT INTO wechat_groups (name, owner_staff_id, member_count, capacity, today_messages, sop_status, health_score, created_at, mode) VALUES (?, ?, 0, 200, 0, ?, 70, ?, ?)').run(String(b.name).trim(), b.owner_staff_id ?? null, '未配置', now(), mode)
   const row = db.prepare(`${qAll} WHERE g.id = ?`).get(Number(r.lastInsertRowid))
   res.status(201).json(row)

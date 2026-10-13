@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api'
 import type { BizMode, Customer, CustomerTimelineEntry, FollowUp, Order, Tag } from '../../types'
-import { FOLLOWUP_TYPES, MODE_META, STAGE_META_BY_MODE } from '../../types'
+import { FOLLOWUP_TYPES, MODE_META, STAGE_META } from '../../types'
 import { formatDateTime, formatMoney, healthColor } from '../../utils'
 import Avatar from '../ui/Avatar'
 import Drawer from '../ui/Drawer'
@@ -23,12 +23,12 @@ function parseTs(iso: string): number {
 
 interface CustomerDrawerProps {
   customerId: number | null
-  mode: BizMode
+
   onClose: () => void
   onChanged: () => void
 }
 
-export default function CustomerDrawer({ customerId, mode, onClose, onChanged }: CustomerDrawerProps) {
+export default function CustomerDrawer({ customerId, onClose, onChanged }: CustomerDrawerProps) {
   const { showToast } = useToast()
   const [customer, setCustomer] = useState<Customer | null>(null)
   const [timeline, setTimeline] = useState<CustomerTimelineEntry[]>([])
@@ -77,8 +77,8 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
 
   useEffect(() => {
     if (customerId === null) return
-    api.getTags(mode).then(setTagLibrary).catch(() => {})
-  }, [customerId, mode])
+    api.getTags().then(setTagLibrary).catch(() => {})
+  }, [customerId])
 
   const handleRemoveTag = async (tagName: string) => {
     if (!customer) return
@@ -138,7 +138,7 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
 
   const handleDeleteFollowUp = async (followupId: number) => {
     if (!customer) return
-    if (!window.confirm('确定删除这条跟进记录吗？')) return
+    if (!(await window.confirm('确定删除这条跟进记录吗？'))) return
     try {
       await api.deleteFollowUp(followupId)
       showToast('跟进记录已删除')
@@ -151,7 +151,7 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
 
   const handleDeleteCustomer = async () => {
     if (!customer) return
-    if (!window.confirm(`确定删除客户「${customer.name}」吗？该操作不可恢复`)) return
+    if (!(await window.confirm(`确定删除客户「${customer.name}」吗？该操作不可恢复`))) return
     try {
       await api.deleteCustomer(customer.id)
       showToast('客户档案已删除')
@@ -193,9 +193,9 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
                   <h3 className="font-bold text-slate-900 text-base">{customer.name}</h3>
                   <span className="text-xs text-slate-400">({customer.gender})</span>
                   <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${STAGE_META_BY_MODE[mode][customer.stage].badge}`}
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${STAGE_META[customer.stage].badge}`}
                   >
-                    {STAGE_META_BY_MODE[mode][customer.stage].label}
+                    {STAGE_META[customer.stage].label}
                   </span>
                 </div>
                 <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5 flex-wrap">
@@ -206,7 +206,7 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
                   <span className="truncate">
                     专属导购: <span className="text-emerald-600 font-medium">{customer.staffName || '--'}</span>
                   </span>
-                  {mode === 'service' && customer.company && (
+                  {customer.company && (
                     <>
                       <span className="hidden sm:inline">·</span>
                       <span className="truncate">
@@ -214,7 +214,7 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
                       </span>
                     </>
                   )}
-                  {mode === 'service' && customer.position && (
+                  {customer.position && (
                     <>
                       <span className="hidden sm:inline">·</span>
                       <span className="truncate">
@@ -245,11 +245,11 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
-                <div className="text-[11px] text-slate-400">{MODE_META[mode].metric1Label}</div>
+                <div className="text-[11px] text-slate-400">{MODE_META.metric1Label}</div>
                 <div className="text-base font-bold text-slate-900 mt-0.5">{formatMoney(customer.spend)}</div>
               </div>
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
-                <div className="text-[11px] text-slate-400">{MODE_META[mode].metric2Label}</div>
+                <div className="text-[11px] text-slate-400">{MODE_META.metric2Label}</div>
                 <div className="text-base font-bold text-slate-900 mt-0.5">{customer.orders} 次</div>
               </div>
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
@@ -478,16 +478,11 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
             </button>
             <button
               onClick={() =>
-                showToast(
-                  mode === 'service'
-                    ? `已为 ${customer.name} 开通为期 14 天的企业级 VIP 试用体验授权`
-                    : `已成功为 ${customer.name} 下发满 300 减 50 专属代金券`,
-                  'success'
-                )
+                showToast(`已为 ${customer.name} 下发专属权益券`, 'success')
               }
               className="px-3 py-1.5 border border-slate-300 hover:bg-white text-slate-700 rounded-lg text-xs font-medium transition"
             >
-              {MODE_META[mode].benefitBtn}
+              {MODE_META.benefitBtn}
             </button>
             <button
               onClick={() => showToast('已唤起企微会话窗口', 'info')}
@@ -501,7 +496,6 @@ export default function CustomerDrawer({ customerId, mode, onClose, onChanged }:
           <CustomerFormModal
             open={editOpen}
             customer={customer}
-            mode={mode}
             onClose={() => setEditOpen(false)}
             onSaved={() => {
               if (customerId !== null) fetchDetail(customerId)

@@ -168,8 +168,11 @@ function initSchema() {
   // 活码关联活动/券模板，支持包裹卡、公开领券页等场景
   try { db.prepare('ALTER TABLE qr_codes ADD COLUMN target_type TEXT').run() } catch {}
   try { db.prepare('ALTER TABLE qr_codes ADD COLUMN target_id INTEGER').run() } catch {}
+  // 活码 CTA 模式：target_page=仅落地页（默认）| hybrid=落地页+加顾问按钮 | add_staff=扫码直接加顾问
+  try { db.prepare('ALTER TABLE qr_codes ADD COLUMN cta_type TEXT DEFAULT "hybrid"').run() } catch {}
   const alters2 = [
     ['staff', 'wecom_userid', 'TEXT'],
+    ['staff', 'avatar_url', 'TEXT'],
     ['customers', 'wecom_external_userid', 'TEXT'],
     ['users', 'wecom_userid', 'TEXT'],
     ['wechat_groups', 'wecom_chat_id', 'TEXT'],
@@ -263,6 +266,22 @@ function initSchema() {
       active INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`).run() } catch {}
+  // seckill_grab_orders：秒杀抢单记录表
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS seckill_grab_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id INTEGER NOT NULL REFERENCES seckill_activities(id) ON DELETE CASCADE,
+    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    price REAL NOT NULL,
+    grab_at TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    UNIQUE(activity_id, customer_id)
+  )`).run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_seckill_grab_activity ON seckill_grab_orders(activity_id)').run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_seckill_grab_customer ON seckill_grab_orders(customer_id)').run() } catch {}
+
+  // staff 通讯录同步增强字段
+  try { db.prepare('ALTER TABLE staff ADD COLUMN position TEXT').run() } catch {}
+  try { db.prepare('ALTER TABLE staff ADD COLUMN department TEXT').run() } catch {}
   // 迁移：老 seckill_activities 表补 staff_id
   try { db.prepare('ALTER TABLE seckill_activities ADD COLUMN staff_id INTEGER REFERENCES staff(id)').run() } catch {}
   // seckill 加商品关联（真实商品名 + 图）
@@ -270,6 +289,7 @@ function initSchema() {
   try { db.prepare('ALTER TABLE seckill_activities ADD COLUMN product_image TEXT').run() } catch {}
   // 迁移：老 coupon_redemptions 表补 redemption_channel
   try { db.prepare('ALTER TABLE coupon_redemptions ADD COLUMN redemption_channel TEXT').run() } catch {}
+  try { db.prepare('ALTER TABLE coupons ADD COLUMN image_url TEXT').run() } catch {}
   // wecom_config 补 ext_api_key（第三方对接 API Key）
   try { db.prepare('ALTER TABLE wecom_config ADD COLUMN ext_api_key TEXT').run() } catch {}
   // 视频号小店订单回调加密配置（与企业微信回调独立）
@@ -300,6 +320,85 @@ function initSchema() {
   // === SOP 模板 / 用户 SOP 分野 ===
   // 系统固化模板 is_template=1，永不执行；用户自建 / 从模板 clone 的 is_template=0
   try { db.prepare('ALTER TABLE sops ADD COLUMN is_template INTEGER DEFAULT 0').run() } catch {}
+
+  // === Phase 1: 自建商城（商品 + 分类 + 购物车）===
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      icon TEXT,
+      sort_order INTEGER DEFAULT 0,
+      active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`).run() } catch {}
+
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      category_id INTEGER REFERENCES categories(id),
+      price REAL NOT NULL,
+      original_price REAL,
+      stock INTEGER DEFAULT 0,
+      sold INTEGER DEFAULT 0,
+      description TEXT,
+      image_url TEXT,
+      images TEXT,          -- JSON 数组：多张商品图
+      tag TEXT,             -- "热卖" / "新品" / "限时" 等小标签
+      sku TEXT UNIQUE,
+      active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`).run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_products_active ON products(active)').run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id)').run() } catch {}
+
+  // 购物车：按 customer 记录（每个 customer 可跨终端共享）
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS cart_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      quantity INTEGER NOT NULL DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(customer_id, product_id)
+  )`).run() } catch {}
+
+  // 订单明细：一个订单对应多个商品
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS order_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL REFERENCES products(id),
+      product_name TEXT NOT NULL,
+      product_image TEXT,
+      price REAL NOT NULL,          // 下单时的单价快照
+      quantity INTEGER NOT NULL,
+      subtotal REAL NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`).run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)').run() } catch {}
+  // orders 表补 item_count（商品种类数，运营后台友好）
+  try { db.prepare('ALTER TABLE orders ADD COLUMN item_count INTEGER').run() } catch {}
+  try { db.prepare('ALTER TABLE orders ADD COLUMN items_json TEXT').run() } catch {}
+
+  // === 收货地址 + 订单物流 ===
+  try { db.prepare(`CREATE TABLE IF NOT EXISTS addresses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,              // 收货人
+      phone TEXT,
+      province TEXT,
+      city TEXT,
+      district TEXT,
+      detail TEXT NOT NULL,            // 详细地址（街道门牌号）
+      is_default INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`).run() } catch {}
+  try { db.prepare('CREATE INDEX IF NOT EXISTS idx_addresses_customer ON addresses(customer_id)').run() } catch {}
+
+  // orders 补物流 + 地址字段
+  try { db.prepare('ALTER TABLE orders ADD COLUMN address_id INTEGER REFERENCES addresses(id)').run() } catch {}
+  try { db.prepare('ALTER TABLE orders ADD COLUMN address_snapshot TEXT').run() } catch {}  // 下单时的地址 JSON 快照
+  try { db.prepare('ALTER TABLE orders ADD COLUMN shipping_no TEXT').run() } catch {}      // 物流单号
+  try { db.prepare('ALTER TABLE orders ADD COLUMN shipping_company TEXT').run() } catch {}  // 快递公司
+  try { db.prepare('ALTER TABLE orders ADD COLUMN shipped_at DATETIME').run() } catch {}
 
   // P1-8: 废弃 wecom_config 上的 msg_audit runtime 字段（last_msgid / last_polled_at / status），
   // 游标统一走 msg_audit_state 表。SQLite 不支持 DROP COLUMN，走 rebuild。

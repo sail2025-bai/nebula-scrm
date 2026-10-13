@@ -1,4 +1,5 @@
 import express from 'express'
+import { wrapAsync } from '../utils/wrap.js'
 import { db, initSchema, now, daysSince } from '../db.js'
 import { validateConditions, conditionsToHuman, CONDITION_FIELDS, CONDITION_OPERATORS } from '../utils/sop-conditions.js'
 import { runSopBatch } from '../utils/sop-engine.js'
@@ -64,7 +65,7 @@ function validateSopDSL(body) {
     }
   })
 
-  const mode = body.mode === 'service' ? 'service' : 'retail'
+  const mode = (body.mode === 'service' || body.mode === 'retail') ? body.mode : null
   return { errors, triggerType, steps, name, mode, raw: body }
 }
 
@@ -91,7 +92,7 @@ function serializeSop(row) {
     run_count: row.run_count || 0,
     conversion: row.conversion || 0,
     active: row.active ? 1 : 0,
-    mode: row.mode || 'retail',
+    mode: row.mode || null,
     scope: row.scope || 'all',        // all=全局对全部客户生效, mine=仅创建者名下客户
     created_by: row.created_by || null,
     created_by_name,
@@ -133,14 +134,20 @@ function isAdmin(user) {
   return false
 }
 
+const INDUSTRY_SET = new Set(['retail', 'service'])
+
 router.get('/', (req, res) => {
-  const mode = req.query.mode
   const includeTemplates = req.query.include_templates === '1'
+  // 前端传 ?industry=retail|service 时，只返回该行业的 SOP（含模板和用户自建）
+  // 不传或 industry=all → 全量返回
+  const industry = typeof req.query.industry === 'string' && INDUSTRY_SET.has(req.query.industry)
+    ? req.query.industry
+    : null
   let sql = 'SELECT * FROM sops'
   const where = []
   const params = []
-  if (mode === 'retail' || mode === 'service') { where.push('mode = ?'); params.push(mode) }
   if (!includeTemplates) { where.push('(is_template IS NULL OR is_template = 0)') }
+  if (industry) { where.push('mode = ?'); params.push(industry) }
   if (where.length) sql += ' WHERE ' + where.join(' AND ')
   sql += ' ORDER BY is_template ASC, run_count DESC, id ASC'
   const rows = db.prepare(sql).all(...params)
@@ -363,7 +370,7 @@ router.post('/:id/clone', (req, res) => {
 })
 
 // 手动触发执行 SOP → 统一走 sop-engine（与事件驱动 / 调度器同一入口，分层逻辑一致）
-router.post('/:id/run', async (req, res) => {
+router.post('/:id/run', wrapAsync(async (req, res) => {
   const id = Number(req.params.id)
   const row = Number.isInteger(id) ? db.prepare('SELECT * FROM sops WHERE id = ?').get(id) : null
   if (!row) return res.status(404).json({ error: 'SOP 不存在' })
@@ -404,7 +411,7 @@ router.post('/:id/run', async (req, res) => {
     failed: result.failed.length,
     triggered_by: triggeredBy
   })
-})
+}))
 
 router.get('/runs/all', (req, res) => {
   const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 30))
@@ -432,9 +439,8 @@ function buildTriggerDesc(triggerType, b) {
 // staffId 非 null 时追加 AND customers.staff_id = ?（scope=mine 过滤）
 function matchSopCustomers(sop, limit = 50, staffId = null) {
   const triggerType = sop.trigger_type || 'days_inactive'
-  const mode = sop.mode || 'retail'
-  const params = [mode]
-  let where = 'customer_type = ?'
+  const params = []
+  let where = '1=1'
 
   switch (triggerType) {
     case 'add_friend': {
